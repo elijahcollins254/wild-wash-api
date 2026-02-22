@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from .models import BNPLUser, Payment, TradeIn
 from .serializers import BNPLUserSerializer, TradeInSerializer
+from orders.models import Order
 
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAuthenticated
@@ -116,6 +117,11 @@ class BNPLViewSet(viewsets.GenericViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
+            # SECURITY: Validate that the amount matches the actual order price
+            validation_error = self._validate_bnpl_order_amount(order_id, amount)
+            if validation_error:
+                return validation_error
+
             # Extract numeric part from order_id (e.g., 'WW-00225' -> 225)
             # For BNPL or non-numeric references, use a smaller hash
             order_id_numeric = None
@@ -216,6 +222,76 @@ class BNPLViewSet(viewsets.GenericViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    def _validate_bnpl_order_amount(self, order_id, amount):
+        """Validate that the provided amount matches the actual order price.
+        
+        SECURITY: This prevents users from modifying the amount in the URL
+        to pay less than the actual order requires.
+        
+        Args:
+            order_id: The order code (e.g., 'WW-00225')
+            amount: The amount being paid
+            
+        Returns:
+            None if valid, or a Response object with error details if invalid
+        """
+        try:
+            from decimal import Decimal
+            
+            # Game wallet or non-order payments don't need validation
+            if order_id == 'GAME_WALLET_TOPUP' or order_id is None:
+                return None
+
+            # Try to find the order by its code
+            try:
+                order = Order.objects.get(code=order_id)
+            except Order.DoesNotExist:
+                logger.warning(f"[SECURITY] BNPL: Order not found with code: {order_id}")
+                return Response(
+                    {'detail': f'Order not found: {order_id}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Get the actual order price
+            order_price = order.actual_price or order.price
+            
+            if order_price is None:
+                logger.error(f"[SECURITY] BNPL: Order {order_id} has no price set")
+                return Response(
+                    {'detail': f'Order price is not set'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Convert to Decimal for accurate comparison
+            order_price_decimal = Decimal(str(order_price))
+            amount_decimal = Decimal(str(amount))
+            
+            # Check if amounts match (allow 0.01 tolerance for rounding)
+            if abs(order_price_decimal - amount_decimal) > Decimal('0.01'):
+                logger.warning(
+                    f"[SECURITY] FRAUD ALERT - BNPL Amount mismatch for order {order_id}: "
+                    f"requested={amount}, actual={order_price}"
+                )
+                return Response(
+                    {
+                        'detail': f'Payment amount does not match order total',
+                        'expected_amount': float(order_price),
+                        'provided_amount': amount,
+                        'order_id': order_id
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            logger.info(f"[SECURITY] BNPL order amount validated for {order_id}: {amount} KES")
+            return None
+            
+        except Exception as e:
+            logger.error(f"[SECURITY] Error validating BNPL order amount: {str(e)}", exc_info=True)
+            return Response(
+                {'detail': f'Error validating order: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def users(self, request):
         """Get all BNPL users (for admin)."""
@@ -286,12 +362,18 @@ class MpesaSTKPushView(views.APIView):
         
         # Convert amount to numeric
         try:
-            amount = int(float(amount))
+            amount_float = float(amount)
+            amount = int(amount_float)
         except (ValueError, TypeError):
             return Response(
                 {'detail': 'Invalid amount format'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        
+        # SECURITY: Validate that the amount matches the actual order price
+        validation_error = self._validate_mpesa_order_amount(order_id, amount_float)
+        if validation_error:
+            return validation_error
         
         # Store original order_id for reference, extract numeric part if available
         order_reference = order_id
@@ -393,6 +475,75 @@ class MpesaSTKPushView(views.APIView):
             logger.error(f"Error initiating payment: {str(e)}", exc_info=True)
             return Response(
                 {'detail': f'Error initiating payment: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def _validate_mpesa_order_amount(self, order_id, amount):
+        """Validate that the provided amount matches the actual order price.
+        
+        SECURITY: This prevents users from modifying the amount in the URL
+        to pay less than the actual order requires.
+        
+        Args:
+            order_id: The order code (e.g., 'WW-00225') or None for game wallet top-ups
+            amount: The amount being paid
+            
+        Returns:
+            None if valid, or a Response object with error details if invalid
+        """
+        try:
+            # Game wallet top-ups don't need order validation
+            if order_id is None or order_id == 'GAME_WALLET_TOPUP':
+                return None
+
+            # Try to find the order by its code
+            try:
+                order = Order.objects.get(code=order_id)
+            except Order.DoesNotExist:
+                logger.warning(f"[SECURITY] Order not found with code: {order_id}")
+                return Response(
+                    {'detail': f'Order not found: {order_id}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Get the actual order price
+            from decimal import Decimal
+            order_price = order.actual_price or order.price
+            
+            if order_price is None:
+                logger.error(f"[SECURITY] Order {order_id} has no price set")
+                return Response(
+                    {'detail': f'Order price is not set'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Convert to Decimal for accurate comparison
+            order_price_decimal = Decimal(str(order_price))
+            amount_decimal = Decimal(str(amount))
+            
+            # Check if amounts match (allow 0.01 tolerance for rounding)
+            if abs(order_price_decimal - amount_decimal) > Decimal('0.01'):
+                logger.warning(
+                    f"[SECURITY] FRAUD ALERT - Amount mismatch for order {order_id}: "
+                    f"requested={amount}, actual={order_price}"
+                )
+                return Response(
+                    {
+                        'detail': f'Payment amount does not match order total',
+                        'expected_amount': float(order_price),
+                        'provided_amount': amount,
+                        'order_id': order_id
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            logger.info(f"[SECURITY] Order amount validated successfully for {order_id}: {amount} KES")
+            return None
+            
+        except Exception as e:
+            logger.error(f"[SECURITY] Error validating M-Pesa order amount: {str(e)}", exc_info=True)
+            return Response(
+                {'detail': f'Error validating order: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
