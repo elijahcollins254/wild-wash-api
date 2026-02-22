@@ -1,5 +1,14 @@
 {
-  "buildCommand": "python build_vercel.py",
+  "buildCommand": "pip install -r requirements.txt --quiet && python build_vercel.py",
+  "framework": "django",
+  "python": {
+    "version": "3.11"
+  },
+  "env": {
+    "DJANGO_SETTINGS_MODULE": "api.settings",
+    "VERCEL_BUILD": "1",
+    "PYTHONUNBUFFERED": "1"
+  },
   "builds": [
     {
       "src": "manage.py",
@@ -22,8 +31,5 @@
       "src": "/(.*)",
       "dest": "api/wsgi.py"
     }
-  ],
-  "env": {
-    "DJANGO_SETTINGS_MODULE": "api.settings"
-  }
+  ]
 }
