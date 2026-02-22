@@ -1,8 +1,22 @@
 {
-  "buildCommand": "pip install -r requirements.txt --quiet ; python manage.py collectstatic --noinput --clear 2>&1 | grep -E '(copied|post-processed|^[0-9])' || true",
-  "framework": "django",
-  "env": {
-    "DJANGO_SETTINGS_MODULE": "api.settings",
-    "PYTHONUNBUFFERED": "1"
-  }
+  "builds": [
+    {
+      "src": "api/wsgi.py",
+      "use": "@vercel/python",
+      "config": {
+        "maxLambdaSize": "15mb",
+        "runtime": "python3.11"
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/static/(.*)",
+      "dest": "/staticfiles/$1"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "api/wsgi.py"
+    }
+  ]
 }
