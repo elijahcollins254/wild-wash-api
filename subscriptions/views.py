@@ -24,7 +24,7 @@ class SubscriptionView(APIView):
             serializer = SubscriptionSerializer(subscription)
             return Response(serializer.data)
         except Subscription.DoesNotExist:
-            return Response(None, status=status.HTTP_404_NOT_FOUND)
+            return Response(None, status=status.HTTP_200_OK)
 
     def post(self, request):
         # Cancel existing subscription if any
