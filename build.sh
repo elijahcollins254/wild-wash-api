@@ -1,24 +1,23 @@
 #!/bin/bash
 
-# Install dependencies
-pip install -r requirements.txt
+set -e
 
-# Set a dummy database URL if not provided to avoid build failures
-# Vercel builds don't need actual DB connection for static file collection
+# Install Python dependencies
+echo "Installing dependencies..."
+pip install -r requirements.txt --quiet
+
+# Set django settings
 export DJANGO_SETTINGS_MODULE=api.settings
 
-# Try to collect static files
-# If DB vars are not set, use a SQLite fallback for build
+# For Vercel build environment, use SQLite if DB variables not set
 if [ -z "$DB_HOST" ]; then
-    echo "Database variables not set, using SQLite for static collection..."
     export DB_ENGINE=sqlite3
     export DB_NAME=":memory:"
-else
-    export DB_ENGINE=postgresql
+    echo "Using in-memory SQLite for build..."
 fi
 
-python manage.py collectstatic --noinput --verbosity 0 || {
-    echo "Warning: Static file collection had issues, but build will continue"
-}
+# Collect static files with error tolerance
+echo "Collecting static files..."
+python manage.py collectstatic --noinput 2>&1 | grep -E "(^[0-9]+ |error|Error)" || echo "Static files collection completed"
 
-echo "Build completed successfully"
+echo "✓ Build script finished successfully"

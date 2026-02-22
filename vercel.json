@@ -1,5 +1,5 @@
 {
-  "buildCommand": "bash build.sh",
+  "buildCommand": "python build_vercel.py",
   "builds": [
     {
       "src": "manage.py",
