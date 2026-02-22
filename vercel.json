@@ -1,18 +1,29 @@
 {
+  "buildCommand": "pip install -r requirements.txt && python manage.py collectstatic --noinput",
   "builds": [
     {
-      "src": "api/wsgi.py",
-      "use": "@vercel/python"
+      "src": "manage.py",
+      "use": "@vercel/python",
+      "config": {
+        "maxLambdaSize": "15mb",
+        "runtime": "python3.11"
+      }
     }
   ],
   "routes": [
     {
       "src": "/static/(.*)",
-      "dest": "/static/$1"
+      "dest": "/staticfiles/$1",
+      "headers": {
+        "Cache-Control": "public, max-age=3600, immutable"
+      }
     },
     {
       "src": "/(.*)",
       "dest": "api/wsgi.py"
     }
-  ]
+  ],
+  "env": {
+    "DJANGO_SETTINGS_MODULE": "api.settings"
+  }
 }
