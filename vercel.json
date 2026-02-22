@@ -1,35 +1,8 @@
 {
-  "buildCommand": "pip install -r requirements.txt --quiet && python build_vercel.py",
+  "buildCommand": "pip install -r requirements.txt --quiet ; python manage.py collectstatic --noinput --clear 2>&1 | grep -E '(copied|post-processed|^[0-9])' || true",
   "framework": "django",
-  "python": {
-    "version": "3.11"
-  },
   "env": {
     "DJANGO_SETTINGS_MODULE": "api.settings",
-    "VERCEL_BUILD": "1",
     "PYTHONUNBUFFERED": "1"
-  },
-  "builds": [
-    {
-      "src": "manage.py",
-      "use": "@vercel/python",
-      "config": {
-        "maxLambdaSize": "15mb",
-        "runtime": "python3.11"
-      }
-    }
-  ],
-  "routes": [
-    {
-      "src": "/static/(.*)",
-      "dest": "/staticfiles/$1",
-      "headers": {
-        "Cache-Control": "public, max-age=3600, immutable"
-      }
-    },
-    {
-      "src": "/(.*)",
-      "dest": "api/wsgi.py"
-    }
-  ]
+  }
 }
