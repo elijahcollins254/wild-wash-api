@@ -176,8 +176,9 @@ USE_TZ = True
 STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
-# WhiteNoise configuration for efficient static file serving
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+# Use basic StaticFilesStorage - simpler and works better with WhiteNoise
+# WhiteNoise will handle caching and compression automatically
+STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.StaticFilesStorage'
 
 # Allow staticfiles to be not found in development
 STATICFILES_FINDERS = [
