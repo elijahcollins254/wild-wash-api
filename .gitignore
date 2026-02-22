@@ -1,16 +1,95 @@
-.vercel
-*.log
-*.pyc
-__pycache__
-db.sqlite3
-media
+# Environment variables - NEVER commit these!
+.env
+.env.local
+.env.*.local
+*.env
 
-# Environments 
-.env 
-.venv 
+# Virtual environments
+.venv
+venv
+venv_new
+venv_new/
+venv_new.bak/
+env/
+env.bak/
+ENV/
 .venv_new
-env/ 
-venv_new/ 
-ENV/ 
-env.bak/ 
-venv_new.bak/ 
+env.bak/
+venv_new.bak/
+
+# Python
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# IDEs & Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# Django
+*.log
+db.sqlite3
+db.sqlite3-journal
+/media
+
+# Local development
+local_settings.py
+*.pem
+*.key
+*.p12
+
+# Vercel
+.vercel
+.vercelignore
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node (if applicable)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Package managers
+pip-log.txt
+pip-delete-this-directory.txt
+ 
