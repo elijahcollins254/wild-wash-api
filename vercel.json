@@ -1,5 +1,5 @@
 {
-  "buildCommand": "python manage.py collectstatic --noinput --quiet 2>/dev/null || true",
+  "buildCommand": "python build_vercel.py && echo 'Build complete'",
   "builds": [
     {
       "src": "api/wsgi.py",
