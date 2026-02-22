@@ -1,7 +1,7 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.utils import timezone
 from django.db import models
 from .models import Offer, UserOffer
@@ -10,7 +10,15 @@ from .serializers import OfferSerializer, UserOfferSerializer
 class OfferViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Offer.objects.filter(is_active=True)
     serializer_class = OfferSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
+
+    def get_permissions(self):
+        """
+        Allow anyone to list/retrieve offers, but require authentication for claiming
+        """
+        if self.action == 'claim':
+            return [IsAuthenticated()]
+        return [AllowAny()]
 
     def get_queryset(self):
         now = timezone.now()
