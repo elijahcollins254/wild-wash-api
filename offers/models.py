@@ -31,3 +31,39 @@ class UserOffer(models.Model):
 
     def __str__(self):
         return f"{self.user.username} - {self.offer.title}"
+
+
+class OfferNotificationSubscription(models.Model):
+    """
+    Model to track users who have subscribed to offer notifications via SMS.
+    Can be linked to a User or tracked by phone number for non-registered users.
+    """
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='offer_subscription'
+    )
+    phone_number = models.CharField(
+        max_length=20,
+        unique=True,
+        null=True,
+        blank=True,
+        help_text="Phone number for SMS notifications (if user not registered)"
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['is_active']),
+            models.Index(fields=['phone_number']),
+        ]
+
+    def __str__(self):
+        if self.user:
+            return f"{self.user.username} - Offer Notifications"
+        return f"{self.phone_number} - Offer Notifications"

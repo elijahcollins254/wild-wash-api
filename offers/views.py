@@ -4,8 +4,8 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.utils import timezone
 from django.db import models
-from .models import Offer, UserOffer
-from .serializers import OfferSerializer, UserOfferSerializer
+from .models import Offer, UserOffer, OfferNotificationSubscription
+from .serializers import OfferSerializer, UserOfferSerializer, OfferNotificationSubscriptionSerializer
 
 class OfferViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Offer.objects.filter(is_active=True)
@@ -68,3 +68,67 @@ class UserOfferViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         return UserOffer.objects.filter(user=self.request.user)
+
+
+class OfferSubscriptionViewSet(viewsets.ViewSet):
+    """
+    Endpoint to manage offer notification subscriptions.
+    Users can subscribe/unsubscribe to receive SMS notifications about new offers.
+    """
+    permission_classes = [IsAuthenticated]
+
+    @action(detail=False, methods=['get', 'post'], permission_classes=[IsAuthenticated])
+    def my_subscription(self, request):
+        """
+        GET: Get the current user's subscription status
+        POST: Create or update the current user's subscription
+        """
+        if request.method == 'GET':
+            subscription = OfferNotificationSubscription.objects.filter(user=request.user).first()
+            if subscription:
+                serializer = OfferNotificationSubscriptionSerializer(subscription)
+                return Response(serializer.data)
+            return Response({'is_subscribed': False})
+
+        elif request.method == 'POST':
+            subscription, created = OfferNotificationSubscription.objects.get_or_create(
+                user=request.user,
+                defaults={'phone_number': request.user.phone}
+            )
+            subscription.is_active = True
+            subscription.phone_number = request.user.phone or subscription.phone_number
+            subscription.save()
+            
+            serializer = OfferNotificationSubscriptionSerializer(subscription)
+            return Response(serializer.data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
+    def unsubscribe(self, request):
+        """
+        Unsubscribe from offer notifications
+        """
+        subscription = OfferNotificationSubscription.objects.filter(user=request.user).first()
+        if subscription:
+            subscription.is_active = False
+            subscription.save()
+            return Response({'detail': 'Unsubscribed from offer notifications'}, status=status.HTTP_200_OK)
+        return Response({'detail': 'Not subscribed'}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['get'], permission_classes=[AllowAny])
+    def subscribed_numbers(self, request):
+        """
+        Get all active subscribed phone numbers for SMS sending.
+        This endpoint is used by external services to fetch the list of numbers to send SMS to.
+        """
+        subscriptions = OfferNotificationSubscription.objects.filter(is_active=True).exclude(
+            phone_number__isnull=True
+        ).exclude(phone_number='')
+        
+        # Return only phone numbers as a simple list
+        phone_numbers = [sub.phone_number for sub in subscriptions]
+        
+        return Response({
+            'count': len(phone_numbers),
+            'phone_numbers': phone_numbers,
+            'timestamp': timezone.now()
+        })
