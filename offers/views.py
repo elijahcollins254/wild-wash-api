@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.utils import timezone
 from django.db import models
+from django.http import JsonResponse
 from .models import Offer, UserOffer, OfferNotificationSubscription
 from .serializers import OfferSerializer, UserOfferSerializer, OfferNotificationSubscriptionSerializer
 
@@ -119,6 +120,7 @@ class OfferSubscriptionViewSet(viewsets.ViewSet):
         """
         Get all active subscribed phone numbers for SMS sending.
         This endpoint is used by external services to fetch the list of numbers to send SMS to.
+        CORS enabled for cross-origin requests.
         """
         subscriptions = OfferNotificationSubscription.objects.filter(is_active=True).exclude(
             phone_number__isnull=True
@@ -127,8 +129,15 @@ class OfferSubscriptionViewSet(viewsets.ViewSet):
         # Return only phone numbers as a simple list
         phone_numbers = [sub.phone_number for sub in subscriptions]
         
-        return Response({
+        response = Response({
             'count': len(phone_numbers),
             'phone_numbers': phone_numbers,
             'timestamp': timezone.now()
         })
+        
+        # Add CORS headers for cross-origin requests
+        response['Access-Control-Allow-Origin'] = '*'
+        response['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+        response['Access-Control-Allow-Headers'] = 'Content-Type'
+        
+        return response

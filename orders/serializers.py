@@ -274,6 +274,7 @@ class OrderListSerializer(serializers.ModelSerializer):
             return None
         return {
             'username': obj.user.username,
+            'phone': obj.user.phone,
             'location': obj.user.location,
             'first_name': obj.user.first_name,
             'last_name': obj.user.last_name,

@@ -47,12 +47,16 @@ class PaymentCreateSerializer(serializers.ModelSerializer):
 
 class BNPLUserSerializer(serializers.ModelSerializer):
     is_enrolled = serializers.SerializerMethodField()
+    user_name = serializers.SerializerMethodField()
+    user_phone = serializers.SerializerMethodField()
 
     class Meta:
         model = BNPLUser
         fields = [
             'id',
             'user',
+            'user_name',
+            'user_phone',
             'is_enrolled',
             'is_active',
             'phone_number',
@@ -66,6 +70,16 @@ class BNPLUserSerializer(serializers.ModelSerializer):
     def get_is_enrolled(self, obj):
         """Return True if user is enrolled AND active in BNPL"""
         return obj.is_active
+
+    def get_user_name(self, obj):
+        """Return user's full name or username"""
+        if obj.user.first_name and obj.user.last_name:
+            return f"{obj.user.first_name} {obj.user.last_name}"
+        return obj.user.username
+
+    def get_user_phone(self, obj):
+        """Return user's phone number"""
+        return obj.user.phone
 
 
 class MpesaSTKRequestSerializer(serializers.ModelSerializer):
