@@ -8,7 +8,8 @@ from .views import (
     UserViewSet, LoginView, ChangePasswordView, 
     get_csrf, RegisterView, UserProfileView,
     LocationViewSet, StaffViewSet, StaffLoginView, AdminLoginView,
-    RequestPasswordResetView, VerifyPasswordResetCodeView, ConfirmPasswordResetView
+    RequestPasswordResetView, VerifyPasswordResetCodeView, ConfirmPasswordResetView,
+    ActivityLogViewSet
 )
 
 router = DefaultRouter()
@@ -28,6 +29,7 @@ urlpatterns = [
     path('password-reset/request/', RequestPasswordResetView.as_view(), name='password-reset-request'),
     path('password-reset/verify/', VerifyPasswordResetCodeView.as_view(), name='password-reset-verify'),
     path('password-reset/confirm/', ConfirmPasswordResetView.as_view(), name='password-reset-confirm'),
+    path('users/<int:user_id>/activity-logs/', ActivityLogViewSet.as_view({'get': 'list'}), name='user-activity-logs'),
 ]
 
 

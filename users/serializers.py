@@ -1,7 +1,7 @@
 # users/serializers.py
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
-from .models import Location
+from .models import Location, ActivityLog
 
 User = get_user_model()
 
@@ -150,3 +150,14 @@ class UserCreateSerializer(serializers.ModelSerializer):
 class ChangePasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(required=True)
     new_password = serializers.CharField(required=True, min_length=6)
+
+class ActivityLogSerializer(serializers.ModelSerializer):
+    admin_username = serializers.CharField(source='admin_user.username', read_only=True)
+    
+    class Meta:
+        model = ActivityLog
+        fields = [
+            'id', 'user', 'action', 'description', 'ip_address', 'user_agent',
+            'admin_user', 'admin_username', 'timestamp', 'changes'
+        ]
+        read_only_fields = ['id', 'timestamp', 'admin_user']

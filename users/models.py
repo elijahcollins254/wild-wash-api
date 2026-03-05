@@ -129,3 +129,46 @@ class PasswordResetCode(models.Model):
 
     def __str__(self):
         return f"Reset code for {self.phone}"
+
+class ActivityLog(models.Model):
+    """
+    Model to track user activity and admin actions for auditing and security.
+    """
+    ACTION_CHOICES = (
+        ('login', 'User Login'),
+        ('logout', 'User Logout'),
+        ('profile_update', 'Profile Updated'),
+        ('role_change', 'Role Changed'),
+        ('password_change', 'Password Changed'),
+        ('password_reset', 'Password Reset'),
+        ('account_suspend', 'Account Suspended'),
+        ('account_activate', 'Account Activated'),
+        ('details_edit', 'Details Edited'),
+        ('admin_action', 'Admin Action'),
+    )
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='activity_logs')
+    action = models.CharField(max_length=50, choices=ACTION_CHOICES)
+    description = models.TextField(blank=True, help_text="Details about the action")
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.TextField(blank=True, help_text="Browser/Client information")
+    admin_user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='admin_actions_log',
+        help_text="Admin who performed the action (if applicable)"
+    )
+    timestamp = models.DateTimeField(auto_now_add=True)
+    changes = models.JSONField(default=dict, blank=True, help_text="JSON of what changed")
+
+    class Meta:
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['user', '-timestamp']),
+            models.Index(fields=['action', '-timestamp']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} - {self.action} - {self.timestamp}"

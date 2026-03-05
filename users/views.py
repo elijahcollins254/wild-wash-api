@@ -10,14 +10,48 @@ from django.utils.decorators import method_decorator
 
 from .serializers import (
     UserSerializer, UserCreateSerializer, ChangePasswordSerializer,
-    LocationSerializer, StaffCreateSerializer
+    LocationSerializer, StaffCreateSerializer, ActivityLogSerializer
 )
-from .models import Location
+from .models import Location, ActivityLog
 from .permissions import LocationBasedPermission
+
+from http.client import HTTPException
 
 User = get_user_model()
 
-from django.http import JsonResponse
+def log_activity(user, action, description='', request=None, admin_user=None, changes=None):
+    """
+    Helper function to log user activity
+    """
+    try:
+        ip_address = None
+        user_agent = ''
+        
+        if request:
+            # Get client IP address
+            x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+            if x_forwarded_for:
+                ip_address = x_forwarded_for.split(',')[0]
+            else:
+                ip_address = request.META.get('REMOTE_ADDR')
+            
+            # Get user agent
+            user_agent = request.META.get('HTTP_USER_AGENT', '')
+        
+        ActivityLog.objects.create(
+            user=user,
+            action=action,
+            description=description,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            admin_user=admin_user,
+            changes=changes or {}
+        )
+    except Exception as e:
+        # Don't fail the main operation if logging fails
+        print(f"Failed to log activity: {str(e)}")
+
+
 from django.views.decorators.csrf import ensure_csrf_cookie
 
 @ensure_csrf_cookie
@@ -64,6 +98,38 @@ class UserViewSet(viewsets.ModelViewSet):
         if self.action == 'create':
             return UserCreateSerializer
         return UserSerializer
+    
+    def partial_update(self, request, *args, **kwargs):
+        """
+        Override partial_update to log changes
+        """
+        user = self.get_object()
+        
+        # Track what changed
+        changes = {}
+        for field in ['first_name', 'last_name', 'email', 'phone_number', 'role', 'is_staff', 'is_superuser', 'is_active']:
+            if field in request.data:
+                old_value = getattr(user, field, None)
+                new_value = request.data.get(field)
+                if old_value != new_value:
+                    changes[field] = {'old': str(old_value), 'new': str(new_value)}
+        
+        # Call parent partial_update
+        response = super().partial_update(request, *args, **kwargs)
+        
+        # Log the activity
+        if changes:
+            description = f"User details updated: {', '.join(changes.keys())}"
+            log_activity(
+                user=user,
+                action='details_edit',
+                description=description,
+                request=request,
+                admin_user=request.user if request.user.is_staff or request.user.is_superuser else None,
+                changes=changes
+            )
+        
+        return response
 
 
 class LoginView(APIView):
@@ -138,6 +204,15 @@ class LoginView(APIView):
             return Response({'detail': 'This account is inactive.'}, status=status.HTTP_401_UNAUTHORIZED)
         
         token, _ = Token.objects.get_or_create(user=user)
+        
+        # Log the successful login
+        log_activity(
+            user=user,
+            action='login',
+            description='User logged in successfully',
+            request=request
+        )
+        
         return Response({
             'token': token.key, 
             'user': UserSerializer(user).data
@@ -155,6 +230,15 @@ class ChangePasswordView(APIView):
             return Response({'old_password': 'Wrong password.'}, status=status.HTTP_400_BAD_REQUEST)
         user.set_password(serializer.validated_data['new_password'])
         user.save()
+        
+        # Log the password change
+        log_activity(
+            user=user,
+            action='password_change',
+            description='User changed their password',
+            request=request
+        )
+        
         return Response({'status': 'password set'})
 
 
@@ -527,7 +611,50 @@ class ConfirmPasswordResetView(APIView):
         reset_code.save()
         PasswordResetCode.objects.filter(user=user, is_used=False).delete()
         
+        # Log the password reset
+        log_activity(
+            user=user,
+            action='password_reset',
+            description='User reset their password via SMS code',
+            request=request
+        )
+        
         return Response(
             {'detail': 'Password reset successful.'},
             status=status.HTTP_200_OK
         )
+
+
+class ActivityLogViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    ViewSet for viewing activity logs.
+    Only authenticated admin/staff users can view activity logs.
+    """
+    serializer_class = ActivityLogSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        """
+        Return activity logs for the requested user.
+        Users can only see their own logs unless they're admin/staff.
+        """
+        user_id = self.kwargs.get('user_id')
+        
+        if not user_id:
+            return ActivityLog.objects.none()
+        
+        # Get the target user
+        try:
+            target_user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return ActivityLog.objects.none()
+        
+        # Admins and staff can view any user's logs
+        if self.request.user.is_staff or self.request.user.is_superuser:
+            return ActivityLog.objects.filter(user=target_user).order_by('-timestamp')
+        
+        # Regular users can only see their own logs
+        if self.request.user.id == target_user.id:
+            return ActivityLog.objects.filter(user=target_user).order_by('-timestamp')
+        
+        return ActivityLog.objects.none()
