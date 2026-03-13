@@ -103,7 +103,7 @@ REST_FRAMEWORK = {
     ],
     'TOKEN_EXPIRED_AFTER_SECONDS': 86400,  # 24 hours
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
-    'PAGE_SIZE': 20,  # Adjust based on your needs
+    'PAGE_SIZE': 100,  # Adjust based on your needs
     'DEFAULT_FILTER_BACKENDS': [
         'rest_framework.filters.SearchFilter',
         'rest_framework.filters.OrderingFilter',
