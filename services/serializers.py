@@ -5,6 +5,7 @@ from .models import Service
 
 class ServiceSerializer(serializers.ModelSerializer):
     image_url = serializers.SerializerMethodField()
+    category = serializers.CharField(source='category.slug', read_only=True, allow_null=True)
 
     def get_image_url(self, obj):
         """Return full URL for the image"""
