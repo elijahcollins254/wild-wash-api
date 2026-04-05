@@ -318,6 +318,7 @@ class OrderUpdateView(APIView):
             # Capture old values before update
             old_values = {
                 'status': old_status,
+                'rider': order.rider,
                 'quantity': getattr(order, 'quantity', None),
                 'weight_kg': getattr(order, 'weight_kg', None),
                 'description': getattr(order, 'description', None),
@@ -333,6 +334,91 @@ class OrderUpdateView(APIView):
             # Update status if provided
             if new_status:
                 order.status = new_status
+
+            # Update rider if provided (for manual assignment by admin)
+            rider_id = request.data.get('rider')
+            if rider_id is not None:
+                try:
+                    from users.models import User
+                    rider = User.objects.get(id=rider_id, role='rider', is_active=True)
+                    old_rider = order.rider
+                    order.rider = rider
+                    # Update status to 'requested' if it was 'pending_assignment'
+                    if order.status == 'pending_assignment':
+                        order.status = 'requested'
+                    print(f"[DEBUG] Rider assigned: {rider.username} (was: {old_rider.username if old_rider else 'None'})")
+
+                    # Send notification to the newly assigned rider
+                    from notifications.models import Notification
+                    message = f"Order {order.code} assigned to you. Pickup: {order.pickup_address[:50]}..."
+                    Notification.objects.create(
+                        user=rider,
+                        order=order,
+                        message=message,
+                        notification_type='new_order'
+                    )
+                    print(f"✓ Notification sent to rider {rider.username} for order {order.code}")
+
+                    # Send SMS to the newly assigned rider
+                    try:
+                        from django.conf import settings
+                        from services.sms_service import AfricasTalkingSMSService, format_phone_number
+                        from django.utils import timezone
+
+                        rider_phone = rider.phone if hasattr(rider, 'phone') and rider.phone else None
+                        rider_phone = None if rider_phone and not str(rider_phone).strip() else rider_phone
+
+                        if rider_phone and str(rider_phone).strip():
+                            sms_service = AfricasTalkingSMSService()
+                            rider_url = f"https://www.wildwash.co.ke/rider/orders/{order.code}"
+
+                            # Format services list
+                            services = ', '.join([s.name for s in order.services.all()]) if order.services.exists() else 'N/A'
+                            user_name = order.user.get_full_name() or order.user.username if order.user else order.customer_name or 'Customer'
+                            user_phone = (order.user.phone if order.user and order.user.phone else None) or \
+                                       (order.customer_phone if order.customer_phone else None) or None
+
+                            # Extract clean pickup address and calculate hours for estimated delivery
+                            clean_pickup = order.pickup_address.split('(contact:')[0].strip() if order.pickup_address else 'N/A'
+                            if order.estimated_delivery:
+                                hours_diff = (order.estimated_delivery - timezone.now()).total_seconds() / 3600
+                                est_time = f"{int(hours_diff)}hrs" if hours_diff > 0 else 'TBD'
+                            else:
+                                est_time = 'TBD'
+
+                            rider_message = (
+                                f"WILDWASH SERVICES\n"
+                                f"New Order Assigned!\n"
+                                f"Order #: {order.code}\n"
+                                f"Customer: {user_name}\n"
+                                f"Phone: {user_phone or 'N/A'}\n"
+                                f"Pickup: {clean_pickup}\n"
+                                f"Dropoff: {order.dropoff_address}\n"
+                                f"Services: {services}\n"
+                                f"Items: {order.items}\n"
+                                f"Price: KES {order.price or 'TBD'}\n"
+                                f"Est. Delivery: {est_time}\n"
+                                f"Accept: {rider_url}"
+                            )
+
+                            formatted_phone = format_phone_number(rider_phone)
+                            result = sms_service.send_sms(formatted_phone, rider_message)
+
+                            if result and result.get('status') == 'success':
+                                print(f"✓ Rider SMS sent to {rider.username} ({formatted_phone}) for order {order.code}")
+                            else:
+                                error_msg = result.get('message', 'Unknown error') if result else 'No response'
+                                print(f"⚠ Failed to send rider SMS to {rider.username}: {error_msg}")
+                        else:
+                            print(f"⚠ No phone number found for rider {rider.username}")
+
+                    except Exception as sms_error:
+                        print(f"⚠ Error sending rider SMS: {str(sms_error)}")
+                        import traceback
+                        traceback.print_exc()
+
+                except User.DoesNotExist:
+                    return Response({'error': 'Invalid rider selected'}, status=status.HTTP_400_BAD_REQUEST)
 
             # Update rider-provided details
             quantity = request.data.get('quantity')
@@ -385,6 +471,15 @@ class OrderUpdateView(APIView):
                     actor=actor,
                     event_type='status_changed',
                     data={'old': old_status, 'new': new_status}
+                )
+
+            # rider change
+            if rider_id is not None and old_values.get('rider') != order.rider:
+                OrderEvent.objects.create(
+                    order=order,
+                    actor=actor,
+                    event_type='rider_assigned',
+                    data={'old': old_values.get('rider').username if old_values.get('rider') else None, 'new': order.rider.username}
                 )
 
             # details changed (quantity, weight, description)
@@ -498,76 +593,77 @@ class OrderUpdateView(APIView):
                 
                 assigned_rider = None
                 
+                # DISABLED: Auto-assignment of riders - now manual by admin
                 # For manual orders created by staff, only auto-assign if delivery address was provided
-                if order.order_type == 'manual':
-                    print(f"[DEBUG] Order {order.code} is a manual order")
-                    print(f"[DEBUG] Order created by staff: {order.created_by.username if order.created_by else 'Unknown'}")
-                    
-                    # Check if delivery address was provided (not the default "To be assigned")
-                    has_delivery_address = (
-                        order.dropoff_address and 
-                        order.dropoff_address.lower() != 'to be assigned' and
-                        order.dropoff_address.strip() != ''
-                    )
-                    
-                    if has_delivery_address:
-                        print(f"[DEBUG] Delivery address provided: {order.dropoff_address}")
-                        print(f"[DEBUG] Assigning to available rider...")
-                        # Only auto-assign if delivery address was provided
-                        if not order.rider and order.service_location:
-                            available_riders = User.objects.filter(
-                                role='rider',
-                                service_location=order.service_location,
-                                is_active=True
-                            ).select_related('rider_profile').order_by('rider_profile__completed_jobs')
-                            
-                            if available_riders.exists():
-                                assigned_rider = available_riders.first()
-                                order.rider = assigned_rider
-                                # Update status from pending_assignment to requested if it was pending
-                                if order.status == 'pending_assignment':
-                                    order.status = 'requested'
-                                order.save(update_fields=['rider', 'status'])
-                                print(f"✓ Order {order.code} assigned to rider {assigned_rider.username}")
-                            else:
-                                print(f"⚠ No available riders in {order.service_location.name}")
-                    else:
-                        print(f"[DEBUG] No delivery address - order stays with staff creator")
-                        
-                # If order doesn't have a rider assigned, assign it to an available rider in the same location
-                elif not order.rider and order.service_location:
-                    print(f"[DEBUG] No rider assigned yet, finding available rider...")
-                    available_riders = User.objects.filter(
-                        role='rider',
-                        service_location=order.service_location,
-                        is_active=True
-                    ).select_related('rider_profile').order_by('rider_profile__completed_jobs')
-                    
-                    print(f"[DEBUG] Available riders in {order.service_location.name}: {available_riders.count()}")
-                    
-                    if available_riders.exists():
-                        assigned_rider = available_riders.first()
-                        order.rider = assigned_rider
-                        # Update status from pending_assignment to requested if it was pending
-                        if order.status == 'pending_assignment':
-                            order.status = 'requested'
-                        order.save(update_fields=['rider', 'status'])
-                        print(f"✓ Order {order.code} assigned to rider {assigned_rider.username}")
-                    else:
-                        print(f"⚠ No available riders in {order.service_location.name} for order {order.code}")
-                else:
-                    # Rider already assigned, use existing rider
-                    assigned_rider = order.rider
-                    if assigned_rider:
-                        print(f"[DEBUG] Rider already assigned: {assigned_rider.username}")
-                
-                # Send notification to rider if assigned
-                if assigned_rider:
-                    message = f"Order {order.code} is ready for delivery! Pickup from: {order.pickup_address}"
-                    notification = Notification.objects.create(
-                        user=assigned_rider,
-                        order=order,
-                        message=message,
+                # if order.order_type == 'manual':
+                #     print(f"[DEBUG] Order {order.code} is a manual order")
+                #     print(f"[DEBUG] Order created by staff: {order.created_by.username if order.created_by else 'Unknown'}")
+                #
+                #     # Check if delivery address was provided (not the default "To be assigned")
+                #     has_delivery_address = (
+                #         order.dropoff_address and
+                #         order.dropoff_address.lower() != 'to be assigned' and
+                #         order.dropoff_address.strip() != ''
+                #     )
+                #
+                #     if has_delivery_address:
+                #         print(f"[DEBUG] Delivery address provided: {order.dropoff_address}")
+                #         print(f"[DEBUG] Assigning to available rider...")
+                #         # Only auto-assign if delivery address was provided
+                #         if not order.rider and order.service_location:
+                #             available_riders = User.objects.filter(
+                #                 role='rider',
+                #                 service_location=order.service_location,
+                #                 is_active=True
+                #             ).select_related('rider_profile').order_by('rider_profile__completed_jobs')
+                #
+                #             if available_riders.exists():
+                #                 assigned_rider = available_riders.first()
+                #                 order.rider = assigned_rider
+                #                 # Update status from pending_assignment to requested if it was pending
+                #                 if order.status == 'pending_assignment':
+                #                     order.status = 'requested'
+                #                 order.save(update_fields=['rider', 'status'])
+                #                 print(f"✓ Order {order.code} assigned to rider {assigned_rider.username}")
+                #             else:
+                #                 print(f"⚠ No available riders in {order.service_location.name}")
+                #     else:
+                #         print(f"[DEBUG] No delivery address - order stays with staff creator")
+                #
+                # # If order doesn't have a rider assigned, assign it to an available rider in the same location
+                # elif not order.rider and order.service_location:
+                #     print(f"[DEBUG] No rider assigned yet, finding available rider...")
+                #     available_riders = User.objects.filter(
+                #         role='rider',
+                #         service_location=order.service_location,
+                #         is_active=True
+                #     ).select_related('rider_profile').order_by('rider_profile__completed_jobs')
+                #
+                #     print(f"[DEBUG] Available riders in {order.service_location.name}: {available_riders.count()}")
+                #
+                #     if available_riders.exists():
+                #         assigned_rider = available_riders.first()
+                #         order.rider = assigned_rider
+                #         # Update status from pending_assignment to requested if it was pending
+                #         if order.status == 'pending_assignment':
+                #             order.status = 'requested'
+                #         order.save(update_fields=['rider', 'status'])
+                #         print(f"✓ Order {order.code} assigned to rider {assigned_rider.username}")
+                #     else:
+                #         print(f"⚠ No available riders in {order.service_location.name} for order {order.code}")
+                # else:
+                #     # Rider already assigned, use existing rider
+                #     assigned_rider = order.rider
+                #     if assigned_rider:
+                #         print(f"[DEBUG] Rider already assigned: {assigned_rider.username}")
+                #
+                # # Send notification to rider if assigned
+                # if assigned_rider:
+                #     message = f"Order {order.code} is ready for delivery! Pickup from: {order.pickup_address}"
+                #     notification = Notification.objects.create(
+                #         user=assigned_rider,
+                #         order=order,
+                #         message=message,
                         notification_type='order_update'
                     )
                     print(f"✓ Notification (ID: {notification.id}) sent to rider {assigned_rider.username} for order {order.code}")
@@ -780,33 +876,34 @@ class OrderListCreateView(generics.ListCreateAPIView):
                         service_location = Location.objects.filter(is_active=True).first()
                         print(f"[DEBUG] First active location: {service_location}")
                 
+                # DISABLED: Auto-assignment of riders - now manual by admin
                 # Get all riders assigned to this location, sorted by completed_jobs
-                if service_location:
-                    print(f"[DEBUG] Looking for riders in location: {service_location.name}")
-                    riders = User.objects.filter(
-                        role='rider',
-                        service_location=service_location,
-                        is_active=True
-                    ).select_related('rider_profile').order_by('rider_profile__completed_jobs')
-                    
-                    print(f"[DEBUG] Found {riders.count()} riders in {service_location.name}")
-                    for rider in riders:
-                        print(f"[DEBUG]   - {rider.username} (completed_jobs: {rider.rider_profile.completed_jobs if hasattr(rider, 'rider_profile') else 'N/A'})")
-                    
-                    if riders.exists():
-                        # Auto-assign to the first available rider (least busy)
-                        assigned_rider = riders.first()
-                        order.rider = assigned_rider
-                        order.service_location = service_location
-                        # Update status from pending_assignment to requested if it was pending
-                        if order.status == 'pending_assignment':
-                            order.status = 'requested'
-                        order.save(update_fields=['rider', 'service_location', 'status'])
-                        print(f"[ASSIGNED] Order {order.code} auto-assigned to rider {assigned_rider.username}")
-                    else:
-                        print(f"⚠ No active riders found in {service_location.name}")
-                else:
-                    print(f"⚠ No service_location found, cannot assign rider")
+                # if service_location:
+                #     print(f"[DEBUG] Looking for riders in location: {service_location.name}")
+                #     riders = User.objects.filter(
+                #         role='rider',
+                #         service_location=service_location,
+                #         is_active=True
+                #     ).select_related('rider_profile').order_by('rider_profile__completed_jobs')
+                #
+                #     print(f"[DEBUG] Found {riders.count()} riders in {service_location.name}")
+                #     for rider in riders:
+                #         print(f"[DEBUG]   - {rider.username} (completed_jobs: {rider.rider_profile.completed_jobs if hasattr(rider, 'rider_profile') else 'N/A'})")
+                #
+                #     if riders.exists():
+                #         # Auto-assign to the first available rider (least busy)
+                #         assigned_rider = riders.first()
+                #         order.rider = assigned_rider
+                #         order.service_location = service_location
+                #         # Update status from pending_assignment to requested if it was pending
+                #         if order.status == 'pending_assignment':
+                #             order.status = 'requested'
+                #         order.save(update_fields=['rider', 'service_location', 'status'])
+                #         print(f"[ASSIGNED] Order {order.code} auto-assigned to rider {assigned_rider.username}")
+                #     else:
+                #         print(f"⚠ No active riders found in {service_location.name}")
+                # else:
+                #     print(f"⚠ No service_location found, cannot assign rider")
             
             except Exception as e:
                 print(f"⚠ Error auto-assigning rider: {str(e)}")

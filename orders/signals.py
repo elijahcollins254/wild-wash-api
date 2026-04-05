@@ -88,58 +88,59 @@ def order_status_update(sender, instance, created, update_fields=None, **kwargs)
                 if not service_location:
                     service_location = Location.objects.filter(is_active=True).first()
             
+            # DISABLED: Auto-assignment of riders - now manual by admin
             # Get all riders assigned to this location, sorted by completed_jobs (ascending)
             # to distribute work evenly
-            if service_location:
-                riders = User.objects.filter(
-                    role='rider',
-                    service_location=service_location,
-                    is_active=True
-                ).select_related('rider_profile').order_by('rider_profile__completed_jobs')
-                
-                if riders.exists():
-                    # Auto-assign to the first available rider (least busy)
-                    assigned_rider = riders.first()
-                    instance.rider = assigned_rider
-                    instance.service_location = service_location
-                    instance.status = 'pending_assignment'  # Keep status as pending_assignment for manual orders
-                    instance.save(update_fields=['rider', 'status', 'service_location'])
-                    
-                    # Notify the assigned rider
-                    message = f"Order {instance.code} assigned to you. Pickup: {instance.pickup_address[:50]}..."
-                    Notification.objects.create(
-                        user=assigned_rider,
-                        order=instance,
-                        message=message,
-                        notification_type='new_order'
-                    )
-                    print(f"[ASSIGNED] Order {instance.code} assigned to rider {assigned_rider.username} in {service_location.name}")
-                else:
-                    # No riders in this location, try to assign to any available rider
-                    all_riders = User.objects.filter(
-                        role='rider',
-                        is_active=True
-                    ).select_related('rider_profile').order_by('rider_profile__completed_jobs')
-                    
-                    if all_riders.exists():
-                        assigned_rider = all_riders.first()
-                        instance.rider = assigned_rider
-                        instance.service_location = service_location
-                        instance.status = 'pending_assignment'
-                        instance.save(update_fields=['rider', 'status', 'service_location'])
-                        
-                        message = f"Order {instance.code} assigned to you (alternate location). Pickup: {instance.pickup_address[:50]}..."
-                        Notification.objects.create(
-                            user=assigned_rider,
-                            order=instance,
-                            message=message,
-                            notification_type='new_order'
-                        )
-                        print(f"[ASSIGNED-ALT] Order {instance.code} assigned to rider {assigned_rider.username} (alternate location)")
-                    else:
-                        print(f"[NO-RIDERS] No riders available for order {instance.code}")
-            else:
-                print(f"[NO-LOCATION] Could not determine location for order {instance.code}")
+            # if service_location:
+            #     riders = User.objects.filter(
+            #         role='rider',
+            #         service_location=service_location,
+            #         is_active=True
+            #     ).select_related('rider_profile').order_by('rider_profile__completed_jobs')
+            #
+            #     if riders.exists():
+            #         # Auto-assign to the first available rider (least busy)
+            #         assigned_rider = riders.first()
+            #         instance.rider = assigned_rider
+            #         instance.service_location = service_location
+            #         instance.status = 'pending_assignment'  # Keep status as pending_assignment for manual orders
+            #         instance.save(update_fields=['rider', 'status', 'service_location'])
+            #
+            #         # Notify the assigned rider
+            #         message = f"Order {instance.code} assigned to you. Pickup: {instance.pickup_address[:50]}..."
+            #         Notification.objects.create(
+            #             user=assigned_rider,
+            #             order=instance,
+            #             message=message,
+            #             notification_type='new_order'
+            #         )
+            #         print(f"[ASSIGNED] Order {instance.code} assigned to rider {assigned_rider.username} in {service_location.name}")
+            #     else:
+            #         # No riders in this location, try to assign to any available rider
+            #         all_riders = User.objects.filter(
+            #             role='rider',
+            #             is_active=True
+            #         ).select_related('rider_profile').order_by('rider_profile__completed_jobs')
+            #
+            #         if all_riders.exists():
+            #             assigned_rider = all_riders.first()
+            #             instance.rider = assigned_rider
+            #             instance.service_location = service_location
+            #             instance.status = 'pending_assignment'
+            #             instance.save(update_fields=['rider', 'status', 'service_location'])
+            #
+            #             message = f"Order {instance.code} assigned to you (alternate location). Pickup: {instance.pickup_address[:50]}..."
+            #             Notification.objects.create(
+            #                 user=assigned_rider,
+            #                 order=instance,
+            #                 message=message,
+            #                 notification_type='new_order'
+            #             )
+            #             print(f"[ASSIGNED-ALT] Order {instance.code} assigned to rider {assigned_rider.username} (alternate location)")
+            #         else:
+            #             print(f"[NO-RIDERS] No riders available for order {instance.code}")
+            # else:
+            #     print(f"[NO-LOCATION] Could not determine location for order {instance.code}")
                 
         except Exception as e:
             print(f"Error in auto-assign logic for order {instance.code}: {e}")
