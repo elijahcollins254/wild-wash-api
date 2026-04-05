@@ -246,11 +246,11 @@ class RiderOrderListView(generics.ListAPIView):
             print(f"\n[DEBUG FolderOrders] Folder {user.username} (ID: {user.id}) querying washed orders")
             print(f"[DEBUG] Total washed orders: {queryset.count()}")
         
-        # For riders: show ready and delivered orders
+        # For riders: show requested and other in-transit orders
         else:
             queryset = Order.objects.filter(
                 rider=user,
-                status__in=['in_progress', 'picked', 'ready', 'delivered']
+                status__in=['requested', 'in_progress', 'picked', 'ready', 'delivered']
             ).exclude(
                 services__name__in=excluded_services
             ).distinct().select_related('user', 'service', 'rider', 'service_location').prefetch_related('services').order_by('-created_at')
