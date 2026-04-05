@@ -626,6 +626,64 @@ class ConfirmPasswordResetView(APIView):
         )
 
 
+class GoogleAuthView(APIView):
+    """
+    Handle Google OAuth authentication.
+    Creates or retrieves user and returns token for NextAuth integration.
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        email = request.data.get('email')
+        name = request.data.get('name')
+        google_id = request.data.get('google_id')
+        
+        if not email:
+            return Response(
+                {'error': 'Email is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get or create user
+        user, created = User.objects.get_or_create(
+            email=email,
+            defaults={
+                'username': email.split('@')[0],
+                'first_name': name.split()[0] if name else '',
+                'last_name': ' '.join(name.split()[1:]) if name and len(name.split()) > 1 else '',
+                'role': 'customer',  # Default role for new users
+                'staff_type': 'general',  # Default staff type
+            }
+        )
+        
+        # Generate token
+        token, _ = Token.objects.get_or_create(user=user)
+        
+        # Log the activity
+        log_activity(
+            user=user,
+            action='google_oauth_login' if not created else 'google_oauth_signup',
+            description='User logged in via Google OAuth' if not created else 'User signed up via Google OAuth',
+            request=request
+        )
+        
+        return Response({
+            'user': {
+                'id': user.id,
+                'email': user.email,
+                'username': user.username,
+                'first_name': user.first_name,
+                'last_name': user.last_name,
+                'phone': getattr(user, 'phone', ''),
+                'role': user.role,
+                'staff_type': user.staff_type,
+                'is_staff': user.is_staff,
+                'is_superuser': user.is_superuser,
+            },
+            'token': token.key,
+        })
+
+
 class ActivityLogViewSet(viewsets.ReadOnlyModelViewSet):
     """
     ViewSet for viewing activity logs.

@@ -9,7 +9,7 @@ from .views import (
     get_csrf, RegisterView, UserProfileView,
     LocationViewSet, StaffViewSet, StaffLoginView, AdminLoginView,
     RequestPasswordResetView, VerifyPasswordResetCodeView, ConfirmPasswordResetView,
-    ActivityLogViewSet
+    ActivityLogViewSet, GoogleAuthView
 )
 
 router = DefaultRouter()
@@ -22,6 +22,7 @@ urlpatterns = [
     path('', include(router.urls)),
     path('register/', RegisterView.as_view(), name='register'),
     path('login/', LoginView.as_view(), name='login'),
+    path('google-auth/', GoogleAuthView.as_view(), name='google-auth'),
     path('staff/login/', StaffLoginView.as_view(), name='staff-login'),
     path('admin/login/', AdminLoginView.as_view(), name='admin-login'),
     path('change-password/', ChangePasswordView.as_view(), name='change-password'),
