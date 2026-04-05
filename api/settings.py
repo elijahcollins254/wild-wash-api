@@ -101,7 +101,7 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
-    'TOKEN_EXPIRED_AFTER_SECONDS': 86400,  # 24 hours
+    'TOKEN_EXPIRED_AFTER_SECONDS': 30 * 24 * 60 * 60,  # 30 days to match NextAuth session maxAge
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 100,  # Adjust based on your needs
     'DEFAULT_FILTER_BACKENDS': [
