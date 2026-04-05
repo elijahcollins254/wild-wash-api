@@ -664,41 +664,41 @@ class OrderUpdateView(APIView):
                 #         user=assigned_rider,
                 #         order=order,
                 #         message=message,
-                        notification_type='order_update'
-                    )
-                    print(f"✓ Notification (ID: {notification.id}) sent to rider {assigned_rider.username} for order {order.code}")
-                    
-                    # Send SMS to rider if phone number exists
-                    print(f"[DEBUG] Checking rider phone: {assigned_rider.phone if hasattr(assigned_rider, 'phone') else 'No phone attribute'}")
-                    if assigned_rider.phone:  # type: ignore
-                        try:
-                            from services.sms_service import AfricasTalkingSMSService
-                            
-                            print(f"[DEBUG] Initializing SMS service for rider...")
-                            sms_service = AfricasTalkingSMSService()
-                            print(f"[DEBUG] Sending order ready notification to {assigned_rider.phone}...")
-                            
-                            sms_result = sms_service.send_order_ready_notification(
-                                assigned_rider.phone,  # type: ignore
-                                order,
-                                assigned_rider.get_full_name() or assigned_rider.username
-                            )
-                            
-                            print(f"[DEBUG] SMS result: {sms_result}")
-                            
-                            if sms_result and sms_result.get('status') == 'success':
-                                print(f"✓ SMS sent to rider {assigned_rider.username} ({assigned_rider.phone})")  # type: ignore
-                            else:
-                                error_msg = sms_result.get('message', 'Unknown error') if sms_result else 'No response'
-                                print(f"⚠ Failed to send SMS to rider: {error_msg}")
-                        except Exception as e:
-                            print(f"⚠ SMS service error for rider {assigned_rider.username}: {str(e)}")
-                            import traceback
-                            traceback.print_exc()
-                    else:
-                        print(f"⚠ Rider {assigned_rider.username} has no phone number registered")
-                else:
-                    print(f"⚠ No rider to send notification to for order {order.code}")
+                #         notification_type='order_update'
+                #     )
+                #     print(f"✓ Notification (ID: {notification.id}) sent to rider {assigned_rider.username} for order {order.code}")
+                #
+                #     # Send SMS to rider if phone number exists
+                #     print(f"[DEBUG] Checking rider phone: {assigned_rider.phone if hasattr(assigned_rider, 'phone') else 'No phone attribute'}")
+                #     if assigned_rider.phone:  # type: ignore
+                #         try:
+                #             from services.sms_service import AfricasTalkingSMSService
+                #
+                #             print(f"[DEBUG] Initializing SMS service for rider...")
+                #             sms_service = AfricasTalkingSMSService()
+                #             print(f"[DEBUG] Sending order ready notification to {assigned_rider.phone}...")
+                #
+                #             sms_result = sms_service.send_order_ready_notification(
+                #                 assigned_rider.phone,  # type: ignore
+                #                 order,
+                #                 assigned_rider.get_full_name() or assigned_rider.username
+                #             )
+                #
+                #             print(f"[DEBUG] SMS result: {sms_result}")
+                #
+                #             if sms_result and sms_result.get('status') == 'success':
+                #                 print(f"✓ SMS sent to rider {assigned_rider.username} ({assigned_rider.phone})")  # type: ignore
+                #             else:
+                #                 error_msg = sms_result.get('message', 'Unknown error') if sms_result else 'No response'
+                #                 print(f"⚠ Failed to send SMS to rider: {error_msg}")
+                #         except Exception as e:
+                #             print(f"⚠ SMS service error for rider {assigned_rider.username}: {str(e)}")
+                #             import traceback
+                #             traceback.print_exc()
+                #     else:
+                #         print(f"⚠ Rider {assigned_rider.username} has no phone number registered")
+                # else:
+                #     print(f"⚠ No rider to send notification to for order {order.code}")
 
                 # record assignment event
                 if assigned_rider:
