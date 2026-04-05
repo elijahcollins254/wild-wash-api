@@ -159,6 +159,123 @@ class Order(models.Model):
         blank=True,
         help_text="Timestamp when order was folded"
     )
+    # Washer input details
+    washer_items = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Number of items recorded by washer"
+    )
+    washer_weight = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Weight (kg) recorded by washer"
+    )
+    washer_notes = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Notes/description recorded by washer"
+    )
+    washer_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Actual price recorded by washer"
+    )
+    
+    # Folder input details
+    folder_items = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Number of items recorded by folder"
+    )
+    folder_weight = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Weight (kg) recorded by folder"
+    )
+    folder_notes = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Notes/description recorded by folder"
+    )
+    folder_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Actual price recorded by folder"
+    )
+    
+    # Fumigator workflow
+    fumigator = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="fumigated_orders",
+        help_text="Staff member who fumigated the order"
+    )
+    fumigated_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp when order was fumigated"
+    )
+    # Fumigator input details
+    fumigator_items = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Number of items recorded by fumigator"
+    )
+    fumigator_weight = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Weight (kg) recorded by fumigator"
+    )
+    fumigator_notes = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Notes/description recorded by fumigator"
+    )
+    fumigator_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Actual price recorded by fumigator"
+    )
+    
+    # Rider input details
+    rider_items = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Number of items recorded by rider"
+    )
+    rider_weight = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Weight (kg) recorded by rider"
+    )
+    rider_notes = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Notes/description recorded by rider during delivery"
+    )
+    rider_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Actual price recorded by rider"
+    )
 
 
     def save(self, *args, **kwargs):

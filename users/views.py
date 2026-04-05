@@ -7,6 +7,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework.authentication import TokenAuthentication
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
+from django.http import JsonResponse
 
 from .serializers import (
     UserSerializer, UserCreateSerializer, ChangePasswordSerializer,

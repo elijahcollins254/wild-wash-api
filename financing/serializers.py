@@ -1,5 +1,6 @@
 # financing/serializers.py
 from rest_framework import serializers
+from decimal import Decimal
 from .models import LoanApplication, LoanCollateral, LoanGuarantor, LoanRepayment, Investment
 from orders.models import Order
 
@@ -134,7 +135,7 @@ class InvestmentDetailSerializer(serializers.ModelSerializer):
 class CreateInvestmentSerializer(serializers.Serializer):
     """Serializer for creating investments"""
     plan_type = serializers.ChoiceField(choices=['starter', 'professional', 'enterprise'])
-    amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=1)
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('1'))
     
     def validate_amount(self, value):
         """Validate minimum investment amounts"""

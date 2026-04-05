@@ -254,6 +254,11 @@ class OrderListSerializer(serializers.ModelSerializer):
     timeline = serializers.SerializerMethodField()
     order_items = serializers.SerializerMethodField()
     is_paid = serializers.SerializerMethodField()
+    washer_name = serializers.SerializerMethodField()
+    folder_name = serializers.SerializerMethodField()
+    fumigator_name = serializers.SerializerMethodField()
+    rider_name = serializers.SerializerMethodField()
+    staff_input_details = serializers.SerializerMethodField()
     
     def get_is_paid(self, obj):
         """Return whether this order has been paid"""
@@ -409,6 +414,88 @@ class OrderListSerializer(serializers.ModelSerializer):
             }
         return None
 
+    def get_washer_name(self, obj):
+        """Return washer's full name"""
+        if obj.washer:
+            return f"{obj.washer.first_name} {obj.washer.last_name}".strip() or obj.washer.username
+        return None
+
+    def get_folder_name(self, obj):
+        """Return folder's full name"""
+        if obj.folder:
+            return f"{obj.folder.first_name} {obj.folder.last_name}".strip() or obj.folder.username
+        return None
+
+    def get_fumigator_name(self, obj):
+        """Return fumigator's full name"""
+        if hasattr(obj, 'fumigator') and obj.fumigator:
+            return f"{obj.fumigator.first_name} {obj.fumigator.last_name}".strip() or obj.fumigator.username
+        return None
+
+    def get_rider_name(self, obj):
+        """Return rider's full name"""
+        if obj.rider:
+            return f"{obj.rider.first_name} {obj.rider.last_name}".strip() or obj.rider.username
+        return None
+
+    def get_staff_input_details(self, obj):
+        """Return all staff input details for this order"""
+        details = []
+        
+        # Washer details
+        if (obj.washer_items is not None or obj.washer_weight or obj.washer_notes or obj.washer_price):
+            details.append({
+                'staff_member': self.get_washer_name(obj) or 'Washer',
+                'staff_role': 'Washer',
+                'items': obj.washer_items,
+                'weight_kg': float(obj.washer_weight) if obj.washer_weight else None,
+                'description': obj.washer_notes,
+                'actual_price': float(obj.washer_price) if obj.washer_price else None,
+                'status_recorded': 'washed',
+                'recorded_at': obj.washed_at.isoformat() if obj.washed_at else None,
+            })
+        
+        # Folder details
+        if (obj.folder_items is not None or obj.folder_weight or obj.folder_notes or obj.folder_price):
+            details.append({
+                'staff_member': self.get_folder_name(obj) or 'Folder',
+                'staff_role': 'Folder',
+                'items': obj.folder_items,
+                'weight_kg': float(obj.folder_weight) if obj.folder_weight else None,
+                'description': obj.folder_notes,
+                'actual_price': float(obj.folder_price) if obj.folder_price else None,
+                'status_recorded': 'ready',
+                'recorded_at': obj.folded_at.isoformat() if obj.folded_at else None,
+            })
+        
+        # Fumigator details
+        if (hasattr(obj, 'fumigator_items') and (obj.fumigator_items is not None or obj.fumigator_weight or obj.fumigator_notes or obj.fumigator_price)):
+            details.append({
+                'staff_member': self.get_fumigator_name(obj) or 'Fumigator',
+                'staff_role': 'Fumigator',
+                'items': getattr(obj, 'fumigator_items', None),
+                'weight_kg': float(obj.fumigator_weight) if getattr(obj, 'fumigator_weight', None) else None,
+                'description': getattr(obj, 'fumigator_notes', None),
+                'actual_price': float(obj.fumigator_price) if getattr(obj, 'fumigator_price', None) else None,
+                'status_recorded': 'fumigated',
+                'recorded_at': obj.fumigated_at.isoformat() if getattr(obj, 'fumigated_at', None) else None,
+            })
+        
+        # Rider details
+        if (obj.rider_items is not None or obj.rider_weight or obj.rider_notes or obj.rider_price):
+            details.append({
+                'staff_member': self.get_rider_name(obj) or 'Rider',
+                'staff_role': 'Rider',
+                'items': obj.rider_items,
+                'weight_kg': float(obj.rider_weight) if obj.rider_weight else None,
+                'description': obj.rider_notes or obj.description,
+                'actual_price': float(obj.rider_price) if obj.rider_price else None,
+                'status_recorded': 'delivered',
+                'recorded_at': obj.delivered_at.isoformat() if obj.delivered_at else None,
+            })
+        
+        return details
+
     class Meta:
         model = Order
         fields = [
@@ -447,4 +534,29 @@ class OrderListSerializer(serializers.ModelSerializer):
             "drop_off_type",
             "customer_name",
             "customer_phone",
+            # Staff detail tracking fields
+            "washer_name",
+            "folder_name",
+            "fumigator_name",
+            "rider_name",
+            "staff_input_details",
+            "washer_items",
+            "washer_weight",
+            "washer_notes",
+            "washer_price",
+            "folder_items",
+            "folder_weight",
+            "folder_notes",
+            "folder_price",
+            "fumigator_items",
+            "fumigator_weight",
+            "fumigator_notes",
+            "fumigator_price",
+            "rider_items",
+            "rider_weight",
+            "rider_notes",
+            "rider_price",
+            "washed_at",
+            "folded_at",
+            "fumigated_at",
         ]
