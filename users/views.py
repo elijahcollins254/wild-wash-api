@@ -656,8 +656,11 @@ class GoogleAuthView(APIView):
             }
         )
         
-        # Generate token
-        token, _ = Token.objects.get_or_create(user=user)
+        # Get or create token (reuse existing token instead of deleting it)
+        # Deleting old tokens causes issues if the user is already authenticated
+        token, created = Token.objects.get_or_create(user=user)
+        action = 'Created' if created else 'Reused'
+        print(f'[GoogleAuthView] {action} token for user {user.id}, token: {token.key[:20]}...')
         
         # Log the activity
         log_activity(
