@@ -81,6 +81,7 @@ class UserSerializer(serializers.ModelSerializer):
             "last_name",
             "phone",
             "role",
+            "staff_type",
             "location",
             "pickup_address",
             "is_staff",
@@ -88,6 +89,7 @@ class UserSerializer(serializers.ModelSerializer):
             "service_location_display",
             "date_joined",
             "created_at",
+            "profile_complete",
         ]
         read_only_fields = ["id", "is_staff", "date_joined"]
 
