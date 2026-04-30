@@ -78,7 +78,22 @@ class UserProfileView(APIView):
         serializer = self.serializer_class(request.user, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
-        return Response(serializer.data)
+        
+        # Auto-set profile_complete to true if all required fields are now filled
+        user = request.user
+        required_fields = ['first_name', 'last_name', 'phone', 'location', 'pickup_address']
+        
+        # Check if all required fields have values (not empty strings or None)
+        all_fields_filled = all(
+            getattr(user, field, '').strip() 
+            for field in required_fields
+        )
+        
+        if all_fields_filled and not user.profile_complete:
+            user.profile_complete = True
+            user.save(update_fields=['profile_complete'])
+        
+        return Response(self.serializer_class(user).data)
 
 
 class ProfileSetupView(APIView):
