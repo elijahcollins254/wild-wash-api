@@ -81,6 +81,52 @@ class UserProfileView(APIView):
         return Response(serializer.data)
 
 
+class ProfileSetupView(APIView):
+    """
+    View for completing user profile setup (required for Google OAuth users)
+    Requires: first_name, last_name, phone, location, pickup_address
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        """Complete the user's profile setup"""
+        user = request.user
+        
+        # Required fields for profile completion
+        required_fields = ['first_name', 'last_name', 'phone', 'location', 'pickup_address']
+        missing_fields = [field for field in required_fields if not request.data.get(field)]
+        
+        if missing_fields:
+            return Response(
+                {'detail': f'Missing required fields: {", ".join(missing_fields)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Update user profile
+        user.first_name = request.data.get('first_name', '').strip()
+        user.last_name = request.data.get('last_name', '').strip()
+        user.phone = request.data.get('phone', '').strip()
+        user.location = request.data.get('location', '').strip()
+        user.pickup_address = request.data.get('pickup_address', '').strip()
+        user.profile_complete = True
+        
+        user.save()
+        
+        # Log the activity
+        log_activity(
+            user=user,
+            action='profile_update',
+            description='User completed profile setup',
+            request=request,
+            changes={'fields_updated': required_fields}
+        )
+        
+        return Response({
+            'detail': 'Profile setup completed successfully',
+            'user': UserSerializer(user).data
+        }, status=status.HTTP_200_OK)
+
+
 class UserViewSet(viewsets.ModelViewSet):
     """
     Admin-friendly user viewset for managing all users.

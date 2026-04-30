@@ -94,6 +94,10 @@ class User(AbstractUser):
         default=False,
         help_text="Designates whether this user can manage other users in their location"
     )
+    profile_complete = models.BooleanField(
+        default=False,
+        help_text="Indicates whether user has completed their profile setup (required for Google OAuth users)"
+    )
 
     def save(self, *args, **kwargs):
         """Auto-format phone number to international format before saving"""

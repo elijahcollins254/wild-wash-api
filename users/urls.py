@@ -6,7 +6,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
     UserViewSet, LoginView, ChangePasswordView, 
-    get_csrf, RegisterView, UserProfileView,
+    get_csrf, RegisterView, UserProfileView, ProfileSetupView,
     LocationViewSet, StaffViewSet, StaffLoginView, AdminLoginView,
     RequestPasswordResetView, VerifyPasswordResetCodeView, ConfirmPasswordResetView,
     ActivityLogViewSet, GoogleAuthView
@@ -19,6 +19,7 @@ router.register(r'staff', StaffViewSet, basename='staff')
 
 urlpatterns = [
     path('me/', UserProfileView.as_view(), name='user-profile'),
+    path('profile/setup/', ProfileSetupView.as_view(), name='profile-setup'),
     path('', include(router.urls)),
     path('register/', RegisterView.as_view(), name='register'),
     path('login/', LoginView.as_view(), name='login'),
