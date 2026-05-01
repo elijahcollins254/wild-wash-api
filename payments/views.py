@@ -226,7 +226,8 @@ class BNPLViewSet(viewsets.GenericViewSet):
         """Validate that the provided amount matches the actual order price.
         
         SECURITY: This prevents users from modifying the amount in the URL
-        to pay less than the actual order requires.
+        to pay less than the actual order requires. ONLY actual_price is accepted,
+        no fallback to estimated price field.
         
         Args:
             order_id: The order code (e.g., 'WW-00225')
@@ -252,13 +253,13 @@ class BNPLViewSet(viewsets.GenericViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Get the actual order price
-            order_price = order.actual_price or order.price
+            # SECURITY: ONLY use actual_price, no fallback to estimated price
+            order_price = order.actual_price
             
             if order_price is None:
-                logger.error(f"[SECURITY] BNPL: Order {order_id} has no price set")
+                logger.error(f"[SECURITY] BNPL: Order {order_id} does not have actual_price set. Estimated price (package calculation) is not accepted for checkout.")
                 return Response(
-                    {'detail': f'Order price is not set'},
+                    {'detail': f'Order cannot be checked out: Staff must set the actual price. The package-calculated price is only an estimate.'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
@@ -482,7 +483,8 @@ class MpesaSTKPushView(views.APIView):
         """Validate that the provided amount matches the actual order price.
         
         SECURITY: This prevents users from modifying the amount in the URL
-        to pay less than the actual order requires.
+        to pay less than the actual order requires. ONLY actual_price is accepted,
+        no fallback to estimated price field.
         
         Args:
             order_id: The order code (e.g., 'WW-00225') or None for game wallet top-ups
@@ -506,14 +508,14 @@ class MpesaSTKPushView(views.APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Get the actual order price
+            # SECURITY: ONLY use actual_price, no fallback to estimated price
             from decimal import Decimal
-            order_price = order.actual_price or order.price
+            order_price = order.actual_price
             
             if order_price is None:
-                logger.error(f"[SECURITY] Order {order_id} has no price set")
+                logger.error(f"[SECURITY] Order {order_id} does not have actual_price set. Estimated price (package calculation) is not accepted for checkout.")
                 return Response(
-                    {'detail': f'Order price is not set'},
+                    {'detail': f'Order cannot be checked out: Staff must set the actual price. The package-calculated price is only an estimate.'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
