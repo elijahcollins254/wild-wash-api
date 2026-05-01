@@ -62,12 +62,14 @@ class User(AbstractUser):
         ("staff", "Staff"),
         ("washer", "Washer"),
         ("folder", "Folder"),
+        ("fumigator", "Fumigator"),
     )
 
     STAFF_TYPE_CHOICES = (
         ("general", "General Staff"),
         ("washer", "Washer"),
         ("folder", "Folder"),
+        ("fumigator", "Fumigator"),
     )
 
     phone = models.CharField(max_length=20, null=True, blank=True)  # Phone number for SMS notifications and login
