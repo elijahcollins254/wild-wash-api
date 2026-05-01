@@ -444,6 +444,69 @@ class OrderUpdateView(APIView):
                     # fallback to raw assignment; DB will validate/raise if invalid
                     order.actual_price = actual_price
 
+            # Update role-specific fields (washer, folder, fumigator)
+            staff_role = request.data.get('staff_role')
+            
+            # Map role names to field prefixes
+            role_field_map = {
+                'washer': 'washer',
+                'folder': 'folder',
+                'fumigator': 'fumigator',
+                'staff': 'staff'
+            }
+            
+            if staff_role and staff_role in role_field_map:
+                prefix = role_field_map[staff_role]
+                
+                # Update role-specific items
+                role_items_key = f'{prefix}_items'
+                role_items = request.data.get(role_items_key)
+                if role_items is not None:
+                    try:
+                        setattr(order, role_items_key, int(role_items))
+                    except (ValueError, TypeError):
+                        pass
+                
+                # Update role-specific weight
+                role_weight_key = f'{prefix}_weight'
+                role_weight = request.data.get(role_weight_key)
+                if role_weight is not None:
+                    try:
+                        from decimal import Decimal
+                        setattr(order, role_weight_key, Decimal(str(role_weight)))
+                    except (ValueError, TypeError, Exception):
+                        pass
+                
+                # Update role-specific notes
+                role_notes_key = f'{prefix}_notes'
+                role_notes = request.data.get(role_notes_key)
+                if role_notes is not None:
+                    setattr(order, role_notes_key, role_notes)
+                
+                # Update role-specific price
+                role_price_key = f'{prefix}_price'
+                role_price = request.data.get(role_price_key)
+                if role_price is not None:
+                    try:
+                        from decimal import Decimal
+                        setattr(order, role_price_key, Decimal(str(role_price)))
+                    except (ValueError, TypeError, Exception):
+                        pass
+                
+                # Track which role/staff member made the update
+                if prefix == 'washer' and request.user:
+                    order.washer = request.user
+                    from django.utils import timezone
+                    order.washed_at = timezone.now()
+                elif prefix == 'folder' and request.user:
+                    order.folder = request.user
+                    from django.utils import timezone
+                    order.folded_at = timezone.now()
+                elif prefix == 'fumigator' and request.user:
+                    order.fumigator = request.user
+                    from django.utils import timezone
+                    order.fumigated_at = timezone.now()
+
             order.save()
 
             # Accept delivered_at from request (rider marking delivery)
