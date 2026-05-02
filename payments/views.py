@@ -3,6 +3,7 @@ import base64
 import logging
 import os
 from datetime import datetime
+from decimal import Decimal
 from django.conf import settings
 from rest_framework import views, viewsets, permissions, status
 from rest_framework.response import Response
@@ -36,6 +37,26 @@ class BNPLViewSet(viewsets.GenericViewSet):
                 'is_enrolled': False,
                 'credit_limit': 0,
                 'current_balance': 0
+            })
+
+    @action(detail=False, methods=['post'])
+    def refresh_status(self, request):
+        """Refresh and return the user's current BNPL status."""
+        try:
+            bnpl_user = BNPLUser.objects.get(user=request.user)
+            serializer = self.get_serializer(bnpl_user)
+            return Response({
+                'status': 'success',
+                'data': serializer.data,
+                'message': 'BNPL status refreshed'
+            })
+        except BNPLUser.DoesNotExist:
+            return Response({
+                'status': 'error',
+                'is_enrolled': False,
+                'credit_limit': 0,
+                'current_balance': 0,
+                'message': 'Not enrolled in BNPL'
             })
 
     @action(detail=False, methods=['post'])
@@ -89,6 +110,102 @@ class BNPLViewSet(viewsets.GenericViewSet):
             return Response(
                 {'detail': 'You are not enrolled in BNPL'}, 
                 status=status.HTTP_400_BAD_REQUEST
+            )
+
+    @action(detail=False, methods=['post'])
+    def pay_balance(self, request):
+        """Initiate M-Pesa payment for BNPL balance using STK Push."""
+        try:
+            bnpl_user = BNPLUser.objects.get(user=request.user)
+            
+            if bnpl_user.current_balance <= 0:
+                return Response(
+                    {'detail': 'No outstanding BNPL balance to pay'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get phone number - can be provided in request or use user's BNPL phone
+            phone = request.data.get('phone_number') or bnpl_user.phone_number
+            
+            if not phone:
+                return Response(
+                    {'detail': 'Phone number is required for M-Pesa payment'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Format phone number - remove any special characters and plus sign
+            # M-Pesa requires format: 254XXXXXXXXX (no + sign, exactly 12 digits)
+            phone_str = str(phone).strip()
+            # Remove plus sign and any non-digit characters
+            phone_str = ''.join(c for c in phone_str if c.isdigit())
+            
+            # Ensure it starts with 254 (Kenya country code)
+            if phone_str.startswith('0'):
+                phone_str = '254' + phone_str[1:]
+            elif not phone_str.startswith('254'):
+                phone_str = '254' + phone_str
+            
+            # Validate phone length (should be exactly 12 digits: 254 + 9 digits)
+            if len(phone_str) != 12:
+                return Response(
+                    {'detail': f'Invalid phone number format. Please provide a valid Kenyan phone number.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            phone = phone_str
+            
+            # Get M-Pesa access token
+            mpesa_view = MpesaSTKPushView()
+            access_token = mpesa_view._get_access_token()
+            
+            # Convert balance to float for M-Pesa
+            amount = float(bnpl_user.current_balance)
+            
+            # Create special order reference for BNPL balance payment
+            account_reference = f'BNPL_BALANCE_{request.user.id}'
+            
+            # Initiate STK Push
+            stk_response = mpesa_view._initiate_stk_push(
+                access_token, amount, phone, account_reference
+            )
+            
+            # Create Payment record for BNPL balance payment
+            checkout_request_id = stk_response.get('CheckoutRequestID', '')
+            payment = Payment.objects.create(
+                user=request.user,
+                order_id=None,  # No specific order, it's for balance
+                amount=bnpl_user.current_balance,
+                phone_number=phone,
+                provider='mpesa',
+                provider_reference=checkout_request_id,
+                status='pending',
+                raw_payload={
+                    'order_reference': account_reference,
+                    'is_bnpl_balance_payment': True,
+                    'bnpl_balance': float(bnpl_user.current_balance)
+                }
+            )
+            payment.mark_initiated(provider_reference=checkout_request_id)
+            
+            logger.info(f"BNPL balance payment initiated for user {request.user}: {checkout_request_id}")
+            return Response({
+                'status': 'success',
+                'message': 'STK push sent to your phone to pay BNPL balance',
+                'checkout_request_id': stk_response.get('CheckoutRequestID'),
+                'amount': amount,
+                'balance': float(bnpl_user.current_balance)
+            }, status=status.HTTP_200_OK)
+            
+        except BNPLUser.DoesNotExist:
+            return Response(
+                {'detail': 'You are not enrolled in BNPL'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Error initiating BNPL balance payment: {str(e)}", exc_info=True)
+            return Response(
+                {'detail': f'Error initiating payment: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
     @action(detail=False, methods=['post'])
@@ -199,6 +316,14 @@ class BNPLViewSet(viewsets.GenericViewSet):
                 }
             )
             payment.mark_success()
+
+            # Update the order's payment_method to reflect BNPL
+            try:
+                order = Order.objects.get(code=order_id)
+                order.payment_method = 'bnpl'
+                order.save(update_fields=['payment_method'])
+            except Order.DoesNotExist:
+                logger.warning(f"Order with code {order_id} not found when processing BNPL payment")
 
             serializer = self.get_serializer(bnpl_user)
             return Response(
@@ -709,10 +834,23 @@ class MpesaCallbackView(views.APIView):
                 if result_code == 0:
                     payment.mark_success(payload=data)
                     
-                    # Check if this is a game wallet top-up
-                    is_game_wallet = (payment.raw_payload or {}).get('is_game_wallet', False)
+                    # Check if this is a BNPL balance payment
+                    is_bnpl_balance = (payment.raw_payload or {}).get('is_bnpl_balance_payment', False)
                     
-                    if is_game_wallet and payment.user:
+                    if is_bnpl_balance and payment.user:
+                        try:
+                            bnpl_user = BNPLUser.objects.get(user=payment.user)
+                            # Clear the BNPL balance
+                            bnpl_user.current_balance = Decimal('0')
+                            bnpl_user.save()
+                            logger.info(f"BNPL balance cleared for user {payment.user}")
+                        except BNPLUser.DoesNotExist:
+                            logger.warning(f"BNPL user not found for payment user {payment.user}")
+                        except Exception as e:
+                            logger.error(f"Error clearing BNPL balance: {str(e)}", exc_info=True)
+                    
+                    # Check if this is a game wallet top-up
+                    elif (payment.raw_payload or {}).get('is_game_wallet', False) and payment.user:
                         # Credit the game wallet
                         try:
                             from decimal import Decimal
@@ -730,22 +868,19 @@ class MpesaCallbackView(views.APIView):
                         except Exception as e:
                             logger.error(f"Error updating game wallet: {str(e)}", exc_info=True)
                     
-                    # If this is a BNPL payment, update the user's BNPL balance
-                    elif payment.provider == 'mpesa' and payment.user and 'BNPL' in (payment.raw_payload or {}).get('order_reference', ''):
-                        try:
-                            from decimal import Decimal
-                            bnpl_user = BNPLUser.objects.get(user=payment.user)
-                            # Reduce the balance by the payment amount
-                            amount_decimal = Decimal(str(payment.amount))
-                            bnpl_user.current_balance -= amount_decimal
-                            if bnpl_user.current_balance < 0:
-                                bnpl_user.current_balance = Decimal('0')
-                            bnpl_user.save()
-                            logger.info(f"Updated BNPL balance for user {payment.user}: {bnpl_user.current_balance}")
-                        except BNPLUser.DoesNotExist:
-                            logger.warning(f"BNPL user not found for payment user {payment.user}")
-                        except Exception as e:
-                            logger.error(f"Error updating BNPL balance: {str(e)}", exc_info=True)
+                    else:
+                        # Update order's payment_method to reflect M-Pesa
+                        order_reference = (payment.raw_payload or {}).get('order_reference')
+                        if order_reference and order_reference != 'GAME_WALLET_TOPUP' and not order_reference.startswith('BNPL_BALANCE'):
+                            try:
+                                order = Order.objects.get(code=order_reference)
+                                order.payment_method = 'mpesa'
+                                order.save(update_fields=['payment_method'])
+                                logger.info(f"Updated order {order_reference} payment_method to mpesa")
+                            except Order.DoesNotExist:
+                                logger.warning(f"Order with code {order_reference} not found when processing M-Pesa callback")
+                            except Exception as e:
+                                logger.error(f"Error updating order payment_method: {str(e)}", exc_info=True)
                 else:
                     payment.mark_failed(payload=data, note=f'Result Code: {result_code}')
             

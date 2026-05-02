@@ -53,6 +53,7 @@ class OrderCreateSerializer(serializers.ModelSerializer):
             "total_price",
             "estimated_delivery",
             "service_quantities",
+            "payment_method",
             # Manual order fields
             "order_type",
             "drop_off_type",
@@ -529,6 +530,7 @@ class OrderListSerializer(serializers.ModelSerializer):
             "timeline",
             "order_items",
             "is_paid",
+            "payment_method",
             # Manual order fields
             "order_type",
             "drop_off_type",

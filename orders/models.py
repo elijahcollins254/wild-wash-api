@@ -56,6 +56,19 @@ class Order(models.Model):
         blank=True,
         help_text="Actual price paid for the order recorded by staff"
     )
+    # Payment method used for this order
+    payment_method = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+        choices=[
+            ('mpesa', 'M-Pesa'),
+            ('card', 'Card'),
+            ('bnpl', 'Buy Now Pay Later'),
+            ('cash', 'Cash'),
+        ],
+        help_text="Payment method used for this order"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     estimated_delivery = models.DateTimeField(null=True, blank=True)
