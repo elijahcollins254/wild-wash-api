@@ -253,11 +253,11 @@ class BNPLViewSet(viewsets.GenericViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # SECURITY: ONLY use actual_price, no fallback to estimated price
-            order_price = order.actual_price
+            # SECURITY: ONLY use actual_price from staff input, no fallback to estimated price
+            order_price = order.get_latest_staff_price()
             
             if order_price is None:
-                logger.error(f"[SECURITY] BNPL: Order {order_id} does not have actual_price set. Estimated price (package calculation) is not accepted for checkout.")
+                logger.error(f"[SECURITY] BNPL: Order {order_id} does not have actual_price set by staff. Estimated price (package calculation) is not accepted for checkout.")
                 return Response(
                     {'detail': f'Order cannot be checked out: Staff must set the actual price. The package-calculated price is only an estimate.'},
                     status=status.HTTP_400_BAD_REQUEST
@@ -508,12 +508,12 @@ class MpesaSTKPushView(views.APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # SECURITY: ONLY use actual_price, no fallback to estimated price
+            # SECURITY: ONLY use actual_price from staff input, no fallback to estimated price
             from decimal import Decimal
-            order_price = order.actual_price
+            order_price = order.get_latest_staff_price()
             
             if order_price is None:
-                logger.error(f"[SECURITY] Order {order_id} does not have actual_price set. Estimated price (package calculation) is not accepted for checkout.")
+                logger.error(f"[SECURITY] Order {order_id} does not have actual_price set by staff. Estimated price (package calculation) is not accepted for checkout.")
                 return Response(
                     {'detail': f'Order cannot be checked out: Staff must set the actual price. The package-calculated price is only an estimate.'},
                     status=status.HTTP_400_BAD_REQUEST

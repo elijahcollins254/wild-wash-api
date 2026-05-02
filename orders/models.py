@@ -292,6 +292,32 @@ class Order(models.Model):
         """Calculate total price from all services"""
         return sum(service.price for service in self.services.all())
 
+    def get_latest_staff_price(self):
+        """
+        Get the latest actual price recorded by any staff member.
+        Returns the most recently recorded price from washer, folder, fumigator, or rider.
+        Returns None if no staff member has recorded a price yet.
+        """
+        prices_with_timestamps = []
+        
+        if self.washer_price and self.washed_at:
+            prices_with_timestamps.append((self.washer_price, self.washed_at))
+        
+        if self.folder_price and self.folded_at:
+            prices_with_timestamps.append((self.folder_price, self.folded_at))
+        
+        if self.fumigator_price and self.fumigated_at:
+            prices_with_timestamps.append((self.fumigator_price, self.fumigated_at))
+        
+        if self.rider_price and self.delivered_at:
+            prices_with_timestamps.append((self.rider_price, self.delivered_at))
+        
+        if not prices_with_timestamps:
+            return None
+        
+        # Return the price with the most recent timestamp
+        return max(prices_with_timestamps, key=lambda x: x[1])[0]
+
     def get_actual_status_display(self):
         """
         Get the actual status display.
