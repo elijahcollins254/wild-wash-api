@@ -8,14 +8,22 @@ import uuid
 
 class Order(models.Model):
     STATUS_CHOICES = [
-        ('requested', 'Requested'),
+        # Initial stages
+        ('requested', 'Order Requested'),
+        ('pending_assignment', 'Pending Pickup Assignment'),  # Awaiting pickup rider
+        ('assigned_pickup', 'Assigned for Pickup'),           # Pickup rider assigned
         ('picked', 'Picked Up'),
+        # Processing stages
         ('in_progress', 'In Progress'),
         ('washed', 'Washed'),
+        ('folded', 'Folded'),
+        # Delivery stages
         ('ready', 'Ready for Delivery'),
+        ('pending_delivery', 'Pending Delivery Assignment'),  # Awaiting delivery rider
+        ('assigned_delivery', 'Assigned for Delivery'),       # Delivery rider assigned
         ('delivered', 'Delivered'),
+        # Other
         ('cancelled', 'Cancelled'),
-        ('pending_assignment', 'Pending Assignment'),  # For manual/walk-in orders awaiting rider assignment
     ]
 
     user = models.ForeignKey(
@@ -73,12 +81,46 @@ class Order(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     estimated_delivery = models.DateTimeField(null=True, blank=True)
     delivered_at = models.DateTimeField(null=True, blank=True)  # helpful to record real delivery time
+    
+    # --- RIDER TRACKING (SEPARATE PICKUP & DELIVERY) ---
+    # Original rider field kept for backward compatibility
     rider = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
         blank=True,
         on_delete=models.SET_NULL,
         related_name="assigned_orders",
+        help_text="[DEPRECATED] Use pickup_rider or delivery_rider instead"
+    )
+    
+    # Pickup rider - who collects from customer
+    pickup_rider = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="pickup_orders",
+        help_text="Rider who picks up from customer"
+    )
+    picked_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp when order was picked up"
+    )
+    
+    # Delivery rider - who delivers to customer
+    delivery_rider = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="delivery_orders",
+        help_text="Rider who delivers to customer"
+    )
+    ready_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp when order was ready for delivery"
     )
     # Rider-added details during pickup
     quantity = models.IntegerField(
@@ -342,6 +384,48 @@ class Order(models.Model):
                 return 'Rider Assigned'
             return self.get_status_display()
         return self.get_status_display()
+
+    # Valid status transitions
+    VALID_TRANSITIONS = {
+        'requested': ['pending_assignment', 'cancelled'],
+        'pending_assignment': ['assigned_pickup', 'cancelled'],
+        'assigned_pickup': ['picked', 'cancelled'],
+        'picked': ['in_progress', 'cancelled'],
+        'in_progress': ['washed', 'cancelled'],
+        'washed': ['folded', 'cancelled'],
+        'folded': ['ready', 'cancelled'],
+        'ready': ['pending_delivery', 'cancelled'],
+        'pending_delivery': ['assigned_delivery', 'cancelled'],
+        'assigned_delivery': ['delivered', 'cancelled'],
+        'delivered': ['cancelled'],
+        'cancelled': [],
+    }
+
+    def can_transition_to(self, new_status):
+        """Check if this order can transition from current status to new status"""
+        current = self.status.lower()
+        new = new_status.lower()
+        
+        if current not in self.VALID_TRANSITIONS:
+            return False
+        
+        return new in self.VALID_TRANSITIONS[current]
+
+    def is_assigned_to_pickup_rider(self, user):
+        """Check if user is the assigned pickup rider"""
+        return self.pickup_rider == user or (
+            # Fallback to old rider field for backward compatibility
+            not self.pickup_rider and self.rider == user and 
+            self.status in ['assigned_pickup', 'picked', 'in_progress', 'washed', 'folded']
+        )
+
+    def is_assigned_to_delivery_rider(self, user):
+        """Check if user is the assigned delivery rider"""
+        return self.delivery_rider == user
+
+    def is_rider_for_any_stage(self, user):
+        """Check if user is assigned as either pickup or delivery rider"""
+        return self.is_assigned_to_pickup_rider(user) or self.is_assigned_to_delivery_rider(user)
 
     def is_paid(self):
         """Check if this order has a successful payment"""

@@ -249,6 +249,8 @@ class OrderListSerializer(serializers.ModelSerializer):
     user = serializers.SerializerMethodField()
     service_location = serializers.SerializerMethodField()
     rider = serializers.SerializerMethodField()
+    pickup_rider = serializers.SerializerMethodField()
+    delivery_rider = serializers.SerializerMethodField()
     created_by = serializers.SerializerMethodField()
     pickup_location = serializers.SerializerMethodField()
     dropoff_location = serializers.SerializerMethodField()
@@ -295,14 +297,45 @@ class OrderListSerializer(serializers.ModelSerializer):
         }
 
     def get_rider(self, obj):
-        if not obj.rider:
+        """Return rider info (backward compatibility - checks both pickup and delivery)"""
+        # Prefer delivery_rider if available, otherwise return pickup_rider
+        rider = obj.delivery_rider or obj.pickup_rider or obj.rider
+        if not rider:
             return None
         return {
-            'username': obj.rider.username,
-            'first_name': obj.rider.first_name,
-            'last_name': obj.rider.last_name,
+            'username': rider.username,
+            'first_name': rider.first_name,
+            'last_name': rider.last_name,
             'service_location': {
-                'name': obj.rider.service_location.name if obj.rider.service_location else None
+                'name': rider.service_location.name if rider.service_location else None
+            }
+        }
+
+    def get_pickup_rider(self, obj):
+        """Return pickup rider info"""
+        if not obj.pickup_rider:
+            return None
+        return {
+            'id': obj.pickup_rider.id,
+            'username': obj.pickup_rider.username,
+            'first_name': obj.pickup_rider.first_name,
+            'last_name': obj.pickup_rider.last_name,
+            'service_location': {
+                'name': obj.pickup_rider.service_location.name if obj.pickup_rider.service_location else None
+            }
+        }
+
+    def get_delivery_rider(self, obj):
+        """Return delivery rider info"""
+        if not obj.delivery_rider:
+            return None
+        return {
+            'id': obj.delivery_rider.id,
+            'username': obj.delivery_rider.username,
+            'first_name': obj.delivery_rider.first_name,
+            'last_name': obj.delivery_rider.last_name,
+            'service_location': {
+                'name': obj.delivery_rider.service_location.name if obj.delivery_rider.service_location else None
             }
         }
 
@@ -525,7 +558,11 @@ class OrderListSerializer(serializers.ModelSerializer):
             "status",
             "estimated_delivery",
             "delivered_at",
+            "picked_at",
+            "ready_at",
             "rider",
+            "pickup_rider",
+            "delivery_rider",
             "created_by",
             "timeline",
             "order_items",

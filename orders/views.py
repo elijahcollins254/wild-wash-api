@@ -312,13 +312,23 @@ class OrderUpdateView(APIView):
             # Determine incoming values and capture old values for audit BEFORE mutating
             new_status = request.data.get('status')
             old_status = order.status
+            
+            # Validate status transition
+            if new_status and not order.can_transition_to(new_status):
+                return Response(
+                    {'error': f'Cannot transition from {old_status} to {new_status}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
             status_changed_to_ready = new_status and new_status.lower() == 'ready' and old_status.lower() != 'ready'
-            status_changed_to_washed = new_status and new_status.lower() == 'washed' and old_status.lower() != 'washed'
+            status_changed_to_picked = new_status and new_status.lower() == 'picked' and old_status.lower() != 'picked'
+            status_changed_to_delivered = new_status and new_status.lower() == 'delivered' and old_status.lower() != 'delivered'
 
             # Capture old values before update
             old_values = {
                 'status': old_status,
-                'rider': order.rider,
+                'pickup_rider': order.pickup_rider,
+                'delivery_rider': order.delivery_rider,
                 'quantity': getattr(order, 'quantity', None),
                 'weight_kg': getattr(order, 'weight_kg', None),
                 'description': getattr(order, 'description', None),
@@ -329,24 +339,111 @@ class OrderUpdateView(APIView):
             print(f"\n[DEBUG OrderUpdate] Order {order.code}")
             print(f"[DEBUG] Old status: {old_status}, New status: {new_status}")
             print(f"[DEBUG] Status changed to ready: {status_changed_to_ready}")
-            print(f"[DEBUG] Current rider: {order.rider.username if order.rider else 'None'}")
+            print(f"[DEBUG] Status changed to picked: {status_changed_to_picked}")
+            print(f"[DEBUG] Pickup rider: {order.pickup_rider.username if order.pickup_rider else 'None'}")
+            print(f"[DEBUG] Delivery rider: {order.delivery_rider.username if order.delivery_rider else 'None'}")
 
             # Update status if provided
             if new_status:
                 order.status = new_status
+                
+                # Set timestamps based on status
+                from django.utils import timezone
+                if status_changed_to_picked:
+                    order.picked_at = timezone.now()
+                elif status_changed_to_ready:
+                    order.ready_at = timezone.now()
+                elif status_changed_to_delivered:
+                    order.delivered_at = timezone.now()
 
-            # Update rider if provided (for manual assignment by admin)
+            # Handle pickup rider assignment
+            pickup_rider_id = request.data.get('pickup_rider')
+            if pickup_rider_id is not None:
+                try:
+                    from users.models import User
+                    rider = User.objects.get(id=pickup_rider_id, role='rider', is_active=True)
+                    order.pickup_rider = rider
+                    # Also update old rider field for backward compatibility
+                    order.rider = rider
+                    # If status is pending_assignment, move to assigned_pickup
+                    if order.status == 'pending_assignment':
+                        order.status = 'assigned_pickup'
+                    print(f"[DEBUG] Pickup rider assigned: {rider.username}")
+
+                    # Send notification to the newly assigned rider
+                    from notifications.models import Notification
+                    message = f"Order {order.code} assigned for pickup. Pickup: {order.pickup_address[:50]}..."
+                    Notification.objects.create(
+                        user=rider,
+                        order=order,
+                        message=message,
+                        notification_type='new_order'
+                    )
+                    print(f"✓ Notification sent to pickup rider {rider.username} for order {order.code}")
+
+                except Exception as e:
+                    print(f"⚠ Error assigning pickup rider: {str(e)}")
+
+            # Handle delivery rider assignment
+            delivery_rider_id = request.data.get('delivery_rider')
+            if delivery_rider_id is not None:
+                try:
+                    from users.models import User
+                    rider = User.objects.get(id=delivery_rider_id, role='rider', is_active=True)
+                    order.delivery_rider = rider
+                    # If status is ready or pending_delivery, move to assigned_delivery
+                    if order.status in ['ready', 'pending_delivery']:
+                        order.status = 'assigned_delivery'
+                    print(f"[DEBUG] Delivery rider assigned: {rider.username}")
+
+                    # Send notification to the newly assigned rider
+                    from notifications.models import Notification
+                    message = f"Order {order.code} assigned for delivery. Dropoff: {order.dropoff_address[:50]}..."
+                    Notification.objects.create(
+                        user=rider,
+                        order=order,
+                        message=message,
+                        notification_type='new_order'
+                    )
+                    print(f"✓ Notification sent to delivery rider {rider.username} for order {order.code}")
+
+                except Exception as e:
+                    print(f"⚠ Error assigning delivery rider: {str(e)}")
+
+            # Backward compatibility: if old 'rider' field is used and it's a pickup stage, assign to pickup_rider
             rider_id = request.data.get('rider')
-            if rider_id is not None:
+            if rider_id is not None and not pickup_rider_id and not delivery_rider_id:
                 try:
                     from users.models import User
                     rider = User.objects.get(id=rider_id, role='rider', is_active=True)
                     old_rider = order.rider
-                    order.rider = rider
-                    # Update status to 'requested' if it was 'pending_assignment'
-                    if order.status == 'pending_assignment':
-                        order.status = 'requested'
-                    print(f"[DEBUG] Rider assigned: {rider.username} (was: {old_rider.username if old_rider else 'None'})")
+                    
+                    # Determine if this is pickup or delivery based on current status
+                    if order.status in ['requested', 'pending_assignment', 'assigned_pickup', 'picked', 'in_progress', 'washed', 'folded']:
+                        order.pickup_rider = rider
+                        order.rider = rider
+                        if order.status == 'pending_assignment':
+                            order.status = 'assigned_pickup'
+                    elif order.status in ['ready', 'pending_delivery']:
+                        order.delivery_rider = rider
+                        if order.status == 'pending_delivery':
+                            order.status = 'assigned_delivery'
+                    
+                    print(f"[DEBUG] Rider assigned (legacy): {rider.username} (was: {old_rider.username if old_rider else 'None'})")
+
+                    # Send notification to the newly assigned rider
+                    from notifications.models import Notification
+                    message = f"Order {order.code} assigned to you."
+                    Notification.objects.create(
+                        user=rider,
+                        order=order,
+                        message=message,
+                        notification_type='new_order'
+                    )
+                    print(f"✓ Notification sent to rider {rider.username} for order {order.code}")
+
+                except Exception as e:
+                    print(f"⚠ Error assigning rider: {str(e)}")
 
                     # Send notification to the newly assigned rider
                     from notifications.models import Notification
