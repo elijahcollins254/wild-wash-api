@@ -94,75 +94,121 @@ class BNPLViewSet(viewsets.GenericViewSet):
         try:
             bnpl_user = BNPLUser.objects.get(user=request.user)
             
-            # Find pending BNPL balance payment
-            pending_payment = Payment.objects.filter(
+            # Find the most recent BNPL balance payment (regardless of status)
+            # This way we can return the final result (success/failed) after payment completes
+            recent_payment = Payment.objects.filter(
                 user=request.user,
-                status='initiated',
                 raw_payload__is_bnpl_balance_payment=True
             ).order_by('-created_at').first()
             
-            if not pending_payment:
+            if not recent_payment:
                 return Response({
                     'has_pending_payment': False,
                     'message': 'No pending BNPL balance payment'
                 })
             
-            # Query M-Pesa for current payment status
-            mpesa_view = MpesaSTKPushView()
-            try:
-                result = mpesa_view._query_transaction_status(pending_payment.provider_reference)
-                result_code = result.get('result_code')
-                
-                logger.info(f"Pending payment status check for user {request.user}: ResultCode={result_code}")
-                
-                # Update payment status based on M-Pesa response
-                if result_code == '0':
-                    # Payment successful
-                    logger.info(f"Payment confirmed successful for user {request.user}")
-                    bnpl_user.current_balance = Decimal('0')
-                    bnpl_user.save()
-                    pending_payment.mark_success(payload=result)
+            # If payment is already success, return success response
+            if recent_payment.status == 'success':
+                logger.info(f"Recent BNPL payment already marked success: {recent_payment.provider_reference}")
+                payment_amount = Decimal(str(recent_payment.amount))
+                return Response({
+                    'has_pending_payment': False,
+                    'payment_status': 'success',
+                    'message': 'Payment completed successfully',
+                    'current_balance': float(bnpl_user.current_balance),
+                    'credit_limit': float(bnpl_user.credit_limit),
+                    'payment_amount': float(payment_amount)
+                })
+            
+            # If payment already failed, return failed response
+            if recent_payment.status == 'failed':
+                logger.info(f"Recent BNPL payment already marked failed: {recent_payment.provider_reference}")
+                return Response({
+                    'has_pending_payment': False,
+                    'payment_status': 'failed',
+                    'message': recent_payment.notes or 'Payment failed. Please try again.',
+                    'current_balance': float(bnpl_user.current_balance),
+                    'credit_limit': float(bnpl_user.credit_limit)
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # If payment is still pending/initiated, query M-Pesa
+            if recent_payment.status in ['pending', 'initiated']:
+                mpesa_view = MpesaSTKPushView()
+                try:
+                    result = mpesa_view._query_transaction_status(recent_payment.provider_reference)
+                    result_code = result.get('result_code')
                     
-                    return Response({
-                        'has_pending_payment': False,
-                        'payment_status': 'success',
-                        'message': 'Payment completed successfully',
-                        'current_balance': 0,
-                        'credit_limit': float(bnpl_user.credit_limit)
-                    })
-                
-                elif result_code == '1':
-                    # Payment still processing
+                    logger.info(f"Pending payment status check for user {request.user}: ResultCode={result_code}, result={result}")
+                    
+                    # M-Pesa Result Codes:
+                    # 0 = Success
+                    # 1 = Request still processing
+                    # Other codes = Failed
+                    
+                    # Normalize result code comparison
+                    is_success = result_code in ['0', 0]
+                    is_processing = result_code in ['1', 1]
+                    
+                    # Update payment status based on M-Pesa response
+                    if is_success:
+                        # Payment successful - reduce balance by payment amount
+                        payment_amount = Decimal(str(recent_payment.amount))
+                        logger.info(f"Payment confirmed successful for user {request.user}, reducing balance by {payment_amount}")
+                        
+                        bnpl_user.current_balance -= payment_amount
+                        bnpl_user.current_balance = max(bnpl_user.current_balance, Decimal('0'))  # Ensure no negative
+                        bnpl_user.save()
+                        recent_payment.mark_success(payload=result)
+                        
+                        return Response({
+                            'has_pending_payment': False,
+                            'payment_status': 'success',
+                            'message': 'Payment completed successfully',
+                            'current_balance': float(bnpl_user.current_balance),
+                            'credit_limit': float(bnpl_user.credit_limit),
+                            'payment_amount': float(payment_amount)
+                        })
+                    
+                    elif is_processing:
+                        # Payment still processing
+                        return Response({
+                            'has_pending_payment': True,
+                            'payment_status': 'processing',
+                            'message': 'Payment is still being processed. Please wait.',
+                            'result_desc': result.get('result_desc', ''),
+                            'current_balance': float(bnpl_user.current_balance)
+                        })
+                    
+                    else:
+                        # Payment failed or cancelled
+                        logger.warning(f"Payment failed for user {request.user}: ResultCode={result_code}")
+                        recent_payment.mark_failed(payload=result, note=f"Query result code: {result_code}")
+                        
+                        return Response({
+                            'has_pending_payment': False,
+                            'payment_status': 'failed',
+                            'message': result.get('result_desc', 'Payment failed. Please try again.'),
+                            'current_balance': float(bnpl_user.current_balance),
+                            'credit_limit': float(bnpl_user.credit_limit)
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                        
+                except Exception as e:
+                    logger.warning(f"Error querying M-Pesa for pending payment: {str(e)}", exc_info=True)
+                    # If query fails, return pending status and let callback handle it
                     return Response({
                         'has_pending_payment': True,
                         'payment_status': 'processing',
-                        'message': 'Payment is still being processed. Please wait.',
-                        'result_desc': result.get('result_desc', ''),
+                        'message': 'Payment status check in progress. Please wait.',
                         'current_balance': float(bnpl_user.current_balance)
                     })
-                
-                else:
-                    # Payment failed or cancelled
-                    logger.warning(f"Payment failed for user {request.user}: ResultCode={result_code}")
-                    pending_payment.mark_failed(payload=result, note=f"Query result code: {result_code}")
-                    
-                    return Response({
-                        'has_pending_payment': False,
-                        'payment_status': 'failed',
-                        'message': result.get('result_desc', 'Payment failed. Please try again.'),
-                        'current_balance': float(bnpl_user.current_balance),
-                        'credit_limit': float(bnpl_user.credit_limit)
-                    }, status=status.HTTP_400_BAD_REQUEST)
-                    
-            except Exception as e:
-                logger.warning(f"Error querying M-Pesa for pending payment: {str(e)}")
-                # If query fails, return pending status and let callback handle it
-                return Response({
-                    'has_pending_payment': True,
-                    'payment_status': 'processing',
-                    'message': 'Payment status check in progress. Please wait.',
-                    'current_balance': float(bnpl_user.current_balance)
-                })
+            
+            # Fallback: unknown status
+            return Response({
+                'has_pending_payment': False,
+                'payment_status': recent_payment.status,
+                'message': f'Payment status: {recent_payment.status}',
+                'current_balance': float(bnpl_user.current_balance)
+            })
         
         except BNPLUser.DoesNotExist:
             return Response(
@@ -232,7 +278,10 @@ class BNPLViewSet(viewsets.GenericViewSet):
 
     @action(detail=False, methods=['post'])
     def pay_balance(self, request):
-        """Initiate M-Pesa payment for BNPL balance using STK Push."""
+        """Initiate M-Pesa payment for BNPL balance using STK Push.
+        
+        Optionally accepts custom amount, otherwise pays full balance.
+        """
         try:
             bnpl_user = BNPLUser.objects.get(user=request.user)
             
@@ -241,6 +290,34 @@ class BNPLViewSet(viewsets.GenericViewSet):
                     {'detail': 'No outstanding BNPL balance to pay'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
+            
+            # Get optional custom amount from request, default to full balance
+            requested_amount = request.data.get('amount')
+            
+            if requested_amount:
+                try:
+                    amount_to_pay = Decimal(str(requested_amount))
+                    if amount_to_pay <= 0:
+                        return Response(
+                            {'detail': 'Amount must be greater than 0'},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    if amount_to_pay > bnpl_user.current_balance:
+                        return Response(
+                            {
+                                'detail': f'Cannot pay more than balance',
+                                'current_balance': float(bnpl_user.current_balance),
+                                'requested_amount': float(amount_to_pay)
+                            },
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                except (ValueError, TypeError):
+                    return Response(
+                        {'detail': 'Invalid amount format'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            else:
+                amount_to_pay = bnpl_user.current_balance
             
             # Get phone number - can be provided in request or use user's BNPL phone
             phone = request.data.get('phone_number') or bnpl_user.phone_number
@@ -276,8 +353,8 @@ class BNPLViewSet(viewsets.GenericViewSet):
             mpesa_view = MpesaSTKPushView()
             access_token = mpesa_view._get_access_token()
             
-            # Convert balance to float for M-Pesa
-            amount = float(bnpl_user.current_balance)
+            # Convert amount to float for M-Pesa
+            amount = float(amount_to_pay)
             
             # Create special order reference for BNPL balance payment
             account_reference = f'BNPL_BALANCE_{request.user.id}'
@@ -292,7 +369,7 @@ class BNPLViewSet(viewsets.GenericViewSet):
             payment = Payment.objects.create(
                 user=request.user,
                 order_id=None,  # No specific order, it's for balance
-                amount=bnpl_user.current_balance,
+                amount=amount_to_pay,
                 phone_number=phone,
                 provider='mpesa',
                 provider_reference=checkout_request_id,
@@ -300,12 +377,13 @@ class BNPLViewSet(viewsets.GenericViewSet):
                 raw_payload={
                     'order_reference': account_reference,
                     'is_bnpl_balance_payment': True,
-                    'bnpl_balance': float(bnpl_user.current_balance)
+                    'bnpl_payment_amount': float(amount_to_pay),
+                    'bnpl_balance_before': float(bnpl_user.current_balance)
                 }
             )
             payment.mark_initiated(provider_reference=checkout_request_id)
             
-            logger.info(f"BNPL balance payment initiated for user {request.user}: {checkout_request_id}")
+            logger.info(f"BNPL balance payment initiated for user {request.user}: {checkout_request_id}, amount: {amount}")
             return Response({
                 'status': 'success',
                 'message': 'STK push sent to your phone to pay BNPL balance',
@@ -1010,12 +1088,19 @@ class MpesaCallbackView(views.APIView):
             checkout_request_id = data.get('Body', {}).get('stkCallback', {}).get('CheckoutRequestID')
             result_code = data.get('Body', {}).get('stkCallback', {}).get('ResultCode')
             
+            logger.info(f"M-Pesa callback received: CheckoutRequestID={checkout_request_id}, ResultCode={result_code}")
+            
             # Update payment status
             if checkout_request_id:
-                payment = Payment.objects.get(provider_reference=checkout_request_id)
+                try:
+                    payment = Payment.objects.get(provider_reference=checkout_request_id)
+                except Payment.DoesNotExist:
+                    logger.warning(f"Payment not found for CheckoutRequestID: {checkout_request_id}")
+                    return Response({'status': 'success'})
                 
                 if result_code == 0:
                     payment.mark_success(payload=data)
+                    logger.info(f"Payment marked as success: {checkout_request_id}")
                     
                     # Check if this is a BNPL balance payment
                     is_bnpl_balance = (payment.raw_payload or {}).get('is_bnpl_balance_payment', False)
@@ -1023,14 +1108,16 @@ class MpesaCallbackView(views.APIView):
                     if is_bnpl_balance and payment.user:
                         try:
                             bnpl_user = BNPLUser.objects.get(user=payment.user)
-                            # Clear the BNPL balance
-                            bnpl_user.current_balance = Decimal('0')
+                            # Reduce BNPL balance by payment amount
+                            payment_amount = Decimal(str(payment.amount))
+                            bnpl_user.current_balance -= payment_amount
+                            bnpl_user.current_balance = max(bnpl_user.current_balance, Decimal('0'))  # Ensure no negative
                             bnpl_user.save()
-                            logger.info(f"BNPL balance cleared for user {payment.user}")
+                            logger.info(f"BNPL balance reduced for user {payment.user}: -{payment_amount}, new balance: {bnpl_user.current_balance}")
                         except BNPLUser.DoesNotExist:
                             logger.warning(f"BNPL user not found for payment user {payment.user}")
                         except Exception as e:
-                            logger.error(f"Error clearing BNPL balance: {str(e)}", exc_info=True)
+                            logger.error(f"Error reducing BNPL balance: {str(e)}", exc_info=True)
                     
                     # Check if this is a game wallet top-up
                     elif (payment.raw_payload or {}).get('is_game_wallet', False) and payment.user:
