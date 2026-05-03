@@ -27,9 +27,38 @@ class BNPLViewSet(viewsets.GenericViewSet):
 
     @action(detail=False, methods=['get'])
     def status(self, request):
-        """Get the user's BNPL status."""
+        """Get the user's BNPL status and check for pending payment confirmations."""
         try:
             bnpl_user = BNPLUser.objects.get(user=request.user)
+            
+            # Check if there are any pending BNPL balance payment
+            pending_payment = Payment.objects.filter(
+                user=request.user,
+                status='initiated',
+                raw_payload__is_bnpl_balance_payment=True
+            ).order_by('-created_at').first()
+            
+            if pending_payment and pending_payment.provider_reference:
+                # Query M-Pesa to check if payment has been completed
+                mpesa_view = MpesaSTKPushView()
+                try:
+                    result = mpesa_view._query_transaction_status(pending_payment.provider_reference)
+                    
+                    # If M-Pesa reports success (result_code == 0), update BNPL balance
+                    if result.get('result_code') == '0':
+                        logger.info(f"M-Pesa query confirms payment success for user {request.user}")
+                        # Clear BNPL balance
+                        bnpl_user.current_balance = Decimal('0')
+                        bnpl_user.save()
+                        # Mark payment as success
+                        pending_payment.mark_success(payload=result)
+                    elif result.get('result_code') != '1':  # 1 = still processing, other codes = failed
+                        # Payment failed or error
+                        pending_payment.mark_failed(payload=result, note=f"M-Pesa query result code: {result.get('result_code')}")
+                except Exception as e:
+                    logger.warning(f"Error querying M-Pesa payment status: {str(e)}")
+                    # Continue without failing - callback might come later
+            
             serializer = self.get_serializer(bnpl_user)
             return Response(serializer.data)
         except BNPLUser.DoesNotExist:
@@ -58,6 +87,95 @@ class BNPLViewSet(viewsets.GenericViewSet):
                 'current_balance': 0,
                 'message': 'Not enrolled in BNPL'
             })
+
+    @action(detail=False, methods=['get'])
+    def check_pending_payment(self, request):
+        """Check status of pending BNPL balance payment with M-Pesa query."""
+        try:
+            bnpl_user = BNPLUser.objects.get(user=request.user)
+            
+            # Find pending BNPL balance payment
+            pending_payment = Payment.objects.filter(
+                user=request.user,
+                status='initiated',
+                raw_payload__is_bnpl_balance_payment=True
+            ).order_by('-created_at').first()
+            
+            if not pending_payment:
+                return Response({
+                    'has_pending_payment': False,
+                    'message': 'No pending BNPL balance payment'
+                })
+            
+            # Query M-Pesa for current payment status
+            mpesa_view = MpesaSTKPushView()
+            try:
+                result = mpesa_view._query_transaction_status(pending_payment.provider_reference)
+                result_code = result.get('result_code')
+                
+                logger.info(f"Pending payment status check for user {request.user}: ResultCode={result_code}")
+                
+                # Update payment status based on M-Pesa response
+                if result_code == '0':
+                    # Payment successful
+                    logger.info(f"Payment confirmed successful for user {request.user}")
+                    bnpl_user.current_balance = Decimal('0')
+                    bnpl_user.save()
+                    pending_payment.mark_success(payload=result)
+                    
+                    return Response({
+                        'has_pending_payment': False,
+                        'payment_status': 'success',
+                        'message': 'Payment completed successfully',
+                        'current_balance': 0,
+                        'credit_limit': float(bnpl_user.credit_limit)
+                    })
+                
+                elif result_code == '1':
+                    # Payment still processing
+                    return Response({
+                        'has_pending_payment': True,
+                        'payment_status': 'processing',
+                        'message': 'Payment is still being processed. Please wait.',
+                        'result_desc': result.get('result_desc', ''),
+                        'current_balance': float(bnpl_user.current_balance)
+                    })
+                
+                else:
+                    # Payment failed or cancelled
+                    logger.warning(f"Payment failed for user {request.user}: ResultCode={result_code}")
+                    pending_payment.mark_failed(payload=result, note=f"Query result code: {result_code}")
+                    
+                    return Response({
+                        'has_pending_payment': False,
+                        'payment_status': 'failed',
+                        'message': result.get('result_desc', 'Payment failed. Please try again.'),
+                        'current_balance': float(bnpl_user.current_balance),
+                        'credit_limit': float(bnpl_user.credit_limit)
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                    
+            except Exception as e:
+                logger.warning(f"Error querying M-Pesa for pending payment: {str(e)}")
+                # If query fails, return pending status and let callback handle it
+                return Response({
+                    'has_pending_payment': True,
+                    'payment_status': 'processing',
+                    'message': 'Payment status check in progress. Please wait.',
+                    'current_balance': float(bnpl_user.current_balance)
+                })
+        
+        except BNPLUser.DoesNotExist:
+            return Response(
+                {'detail': 'You are not enrolled in BNPL'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Error checking pending payment: {str(e)}", exc_info=True)
+            return Response(
+                {'detail': f'Error checking payment status: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
     @action(detail=False, methods=['post'])
     def opt_in(self, request):
@@ -813,6 +931,71 @@ class MpesaSTKPushView(views.APIView):
         """Encode password for M-Pesa authentication."""
         password_string = f"{shortcode}{passkey}{timestamp}"
         return base64.b64encode(password_string.encode()).decode()
+
+    def _query_transaction_status(self, checkout_request_id):
+        """Query M-Pesa for STK Push transaction status.
+        
+        This allows synchronous polling instead of waiting for async callbacks.
+        
+        Args:
+            checkout_request_id: The CheckoutRequestID returned from STK Push
+            
+        Returns:
+            dict with result_code and details, or raises exception on network error
+        """
+        try:
+            config = self._get_mpesa_config()
+            access_token = self._get_access_token()
+            
+            url = 'https://api.safaricom.co.ke/mpesa/stkpushquery/v1/query' if config['business_shortcode'] != '174379' else 'https://sandbox.safaricom.co.ke/mpesa/stkpushquery/v1/query'
+            
+            timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+            password = self._encode_password(
+                config['business_shortcode'],
+                config['passkey'],
+                timestamp
+            )
+            
+            headers = {
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "BusinessShortCode": config['business_shortcode'],
+                "Password": password,
+                "Timestamp": timestamp,
+                "CheckoutRequestID": checkout_request_id
+            }
+            
+            logger.info(f"Querying M-Pesa for STK Push status: {checkout_request_id}")
+            logger.info(f"Query URL: {url}")
+            
+            response = requests.post(url, json=payload, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                result = response.json()
+                result_code = result.get('ResultCode', result.get('resultCode'))
+                logger.info(f"M-Pesa query response for {checkout_request_id}: ResultCode={result_code}")
+                logger.info(f"Full response: {result}")
+                
+                return {
+                    'result_code': str(result_code),
+                    'result_desc': result.get('ResultDesc', result.get('resultDesc', '')),
+                    'checkout_request_id': checkout_request_id,
+                    'raw_response': result
+                }
+            else:
+                logger.warning(f"M-Pesa query returned status {response.status_code}: {response.text}")
+                return {
+                    'result_code': str(response.status_code),
+                    'result_desc': f'HTTP {response.status_code}',
+                    'checkout_request_id': checkout_request_id
+                }
+        except Exception as e:
+            logger.error(f"Error querying M-Pesa transaction status: {str(e)}", exc_info=True)
+            raise Exception(f'Failed to query transaction status: {str(e)}')
+
 
 
 class MpesaCallbackView(views.APIView):
