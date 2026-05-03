@@ -137,17 +137,18 @@ class BNPLViewSet(viewsets.GenericViewSet):
                 try:
                     result = mpesa_view._query_transaction_status(recent_payment.provider_reference)
                     result_code = result.get('result_code')
+                    result_desc = result.get('result_desc', '').lower()
                     
-                    logger.info(f"Pending payment status check for user {request.user}: ResultCode={result_code}, result={result}")
+                    logger.info(f"Pending payment status check for user {request.user}: ResultCode={result_code}, ResultDesc={result_desc}, result={result}")
                     
                     # M-Pesa Result Codes:
                     # 0 = Success
                     # 1 = Request still processing
-                    # Other codes = Failed
+                    # Other codes may vary, check result_desc for context
                     
                     # Normalize result code comparison
                     is_success = result_code in ['0', 0]
-                    is_processing = result_code in ['1', 1]
+                    is_processing = result_code in ['1', 1] or 'processing' in result_desc or 'still being' in result_desc
                     
                     # Update payment status based on M-Pesa response
                     if is_success:
@@ -171,18 +172,19 @@ class BNPLViewSet(viewsets.GenericViewSet):
                     
                     elif is_processing:
                         # Payment still processing
+                        logger.info(f"Payment still processing for user {request.user}")
                         return Response({
                             'has_pending_payment': True,
                             'payment_status': 'processing',
-                            'message': 'Payment is still being processed. Please wait.',
+                            'message': result_desc or 'Payment is still being processed. Please wait.',
                             'result_desc': result.get('result_desc', ''),
                             'current_balance': float(bnpl_user.current_balance)
                         })
                     
                     else:
-                        # Payment failed or cancelled
-                        logger.warning(f"Payment failed for user {request.user}: ResultCode={result_code}")
-                        recent_payment.mark_failed(payload=result, note=f"Query result code: {result_code}")
+                        # Payment failed or cancelled - only mark as failed if definitely not processing
+                        logger.warning(f"Payment failed for user {request.user}: ResultCode={result_code}, ResultDesc={result_desc}")
+                        recent_payment.mark_failed(payload=result, note=f"Query result code: {result_code}, desc: {result_desc}")
                         
                         return Response({
                             'has_pending_payment': False,

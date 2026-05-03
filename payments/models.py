@@ -65,14 +65,22 @@ class Payment(models.Model):
         self.status = self.STATUS_SUCCESS
         self.completed_at = timezone.now()
         if payload:
-            self.raw_payload = payload
+            # Merge M-Pesa response with existing payload, preserving original metadata
+            if self.raw_payload and isinstance(self.raw_payload, dict):
+                self.raw_payload.update({'mpesa_response': payload})
+            else:
+                self.raw_payload = {'mpesa_response': payload}
         self.save(update_fields=['status', 'completed_at', 'raw_payload', 'updated_at'])
 
     def mark_failed(self, payload: dict = None, note: str = ''):
         self.status = self.STATUS_FAILED
         self.completed_at = timezone.now()
         if payload:
-            self.raw_payload = payload
+            # Merge M-Pesa response with existing payload, preserving original metadata
+            if self.raw_payload and isinstance(self.raw_payload, dict):
+                self.raw_payload.update({'mpesa_response': payload})
+            else:
+                self.raw_payload = {'mpesa_response': payload}
         if note:
             self.notes = (self.notes + "\n" + note).strip()
         self.save(update_fields=['status', 'completed_at', 'raw_payload', 'notes', 'updated_at'])
