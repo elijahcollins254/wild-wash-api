@@ -948,8 +948,11 @@ class OrderListCreateView(generics.ListCreateAPIView):
         queryset = super().get_queryset()
         user = self.request.user
         
-        # Optimize queries
-        queryset = queryset.select_related('user', 'service', 'rider', 'service_location').prefetch_related('services')
+        # Optimize queries with selective field loading
+        queryset = queryset.select_related(
+            'user', 'service', 'rider', 'service_location', 
+            'pickup_rider', 'delivery_rider', 'created_by'
+        ).prefetch_related('services')
         
         # Filter by order code if provided
         code = self.request.query_params.get("code")
@@ -971,15 +974,50 @@ class OrderListCreateView(generics.ListCreateAPIView):
                 )
                 print(f"[DEBUG Orders] Applied location filter for: {user.service_location}")
                 print(f"[DEBUG Orders] Total orders matching location: {queryset.count()}")
-                for order in queryset[:5]:
-                    print(f"  - Order {order.code}: service_location={order.service_location}, status={order.status}")
             else:
                 print(f"[DEBUG Orders] ⚠️ Staff has no service_location assigned, returning no orders")
                 return Order.objects.none()
         # For regular users, show only their orders
         elif user.is_authenticated and not user.is_staff:
             queryset = queryset.filter(user=user)
-            
+        
+        # === BACKEND FILTERING SUPPORT (for performance optimization) ===
+        
+        # Filter by status if provided
+        status_filter = self.request.query_params.get("status")
+        if status_filter:
+            print(f"[DEBUG Orders] Filtering by status: {status_filter}")
+            queryset = queryset.filter(status__iexact=status_filter.strip())
+        
+        # Filter by rider if provided (check both rider, pickup_rider, delivery_rider, and created_by for manual orders)
+        rider_filter = self.request.query_params.get("rider")
+        if rider_filter:
+            print(f"[DEBUG Orders] Filtering by rider/staff: {rider_filter}")
+            rider_query = models.Q(
+                rider__username__icontains=rider_filter
+            ) | models.Q(
+                pickup_rider__username__icontains=rider_filter
+            ) | models.Q(
+                delivery_rider__username__icontains=rider_filter
+            ) | models.Q(
+                created_by__username__icontains=rider_filter
+            )
+            queryset = queryset.filter(rider_query)
+        
+        # Search by code or customer name if provided
+        search_query = self.request.query_params.get("search")
+        if search_query:
+            print(f"[DEBUG Orders] Searching for: {search_query}")
+            search_term = search_query.strip()
+            queryset = queryset.filter(
+                models.Q(code__icontains=search_term) |
+                models.Q(customer_name__icontains=search_term) |
+                models.Q(user__username__icontains=search_term) |
+                models.Q(user__first_name__icontains=search_term) |
+                models.Q(user__last_name__icontains=search_term)
+            )
+        
+        print(f"[DEBUG Orders] Final queryset count: {queryset.count()}")
         return queryset
 
     def perform_create(self, serializer):
