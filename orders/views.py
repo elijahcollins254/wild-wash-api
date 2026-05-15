@@ -932,6 +932,22 @@ class OrderListCreateView(generics.ListCreateAPIView):
     queryset = Order.objects.all().order_by("-created_at")
     # We'll enforce authentication for GET (listing) but still allow anonymous POST (create)
     permission_classes = [LocationBasedPermission]
+    
+    # Explicitly configure pagination for faster responses
+    from rest_framework.pagination import PageNumberPagination
+    class OrderPagination(PageNumberPagination):
+        page_size = 20  # Reduced from default 50 for faster response
+        page_size_query_param = 'page_size'
+        max_page_size = 100
+    
+    pagination_class = OrderPagination
+    
+    def get_serializer_class(self):
+        """Use lightweight serializer for list view, full serializer for detail view"""
+        if self.request.method == 'GET':
+            from .serializers import OrderListLightSerializer
+            return OrderListLightSerializer
+        return OrderCreateSerializer
 
     def get_permissions(self):
         """
@@ -948,11 +964,14 @@ class OrderListCreateView(generics.ListCreateAPIView):
         queryset = super().get_queryset()
         user = self.request.user
         
-        # Optimize queries with selective field loading
-        queryset = queryset.select_related(
+        # Optimize queries with selective loading
+        # Defer heavy text fields that aren't needed for list view
+        queryset = queryset.defer(
+            'description', 'washer_notes', 'folder_notes', 'fumigator_notes'
+        ).select_related(
             'user', 'service', 'rider', 'service_location', 
             'pickup_rider', 'delivery_rider', 'created_by'
-        ).prefetch_related('services')
+        )
         
         # Filter by order code if provided
         code = self.request.query_params.get("code")
@@ -965,15 +984,11 @@ class OrderListCreateView(generics.ListCreateAPIView):
             print(f"[DEBUG Orders] Staff service_location: {user.service_location} (ID: {user.service_location.id if user.service_location else 'None'})")
             
             if user.service_location:
-                # Filter orders where either:
-                # 1. The order's service_location matches staff's service_location, or
-                # 2. The customer's location matches staff's service location area
+                # Filter by service location only - no complex Q() queries for performance
                 queryset = queryset.filter(
-                    models.Q(service_location=user.service_location) |
-                    models.Q(user__location__icontains=user.service_location.name)
+                    service_location=user.service_location
                 )
                 print(f"[DEBUG Orders] Applied location filter for: {user.service_location}")
-                print(f"[DEBUG Orders] Total orders matching location: {queryset.count()}")
             else:
                 print(f"[DEBUG Orders] ⚠️ Staff has no service_location assigned, returning no orders")
                 return Order.objects.none()
@@ -1017,7 +1032,6 @@ class OrderListCreateView(generics.ListCreateAPIView):
                 models.Q(user__last_name__icontains=search_term)
             )
         
-        print(f"[DEBUG Orders] Final queryset count: {queryset.count()}")
         return queryset
 
     def perform_create(self, serializer):
