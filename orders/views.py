@@ -247,16 +247,21 @@ class RiderOrderListView(generics.ListAPIView):
             print(f"[DEBUG] Total washed orders: {queryset.count()}")
         
         # For riders: show requested and other in-transit orders
+        # Check both old 'rider' field and new 'pickup_rider'/'delivery_rider' fields
         else:
+            from django.db.models import Q
             queryset = Order.objects.filter(
-                rider=user,
-                status__in=['requested', 'in_progress', 'picked', 'ready', 'delivered']
+                Q(rider=user) |  # Old field for backward compatibility
+                Q(pickup_rider=user) |  # New pickup rider field
+                Q(delivery_rider=user),  # New delivery rider field
+                status__in=['requested', 'assigned_pickup', 'picked', 'in_progress', 'washed', 'folded', 'ready', 'assigned_delivery', 'delivered']
             ).exclude(
                 services__name__in=excluded_services
-            ).distinct().select_related('user', 'service', 'rider', 'service_location').prefetch_related('services').order_by('-created_at')
+            ).distinct().select_related('user', 'service', 'rider', 'pickup_rider', 'delivery_rider', 'service_location').prefetch_related('services').order_by('-created_at')
             
             print(f"\n[DEBUG RiderOrders] Rider {user.username} (ID: {user.id}) querying orders")
             print(f"[DEBUG] Total orders assigned to this rider: {queryset.count()}")
+            print(f"[DEBUG] Checking rider={user}, pickup_rider={user}, delivery_rider={user}")
         
         return queryset
 
