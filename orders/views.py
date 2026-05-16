@@ -366,8 +366,8 @@ class OrderUpdateView(APIView):
                     order.pickup_rider = rider
                     # Also update old rider field for backward compatibility
                     order.rider = rider
-                    # If status is pending_assignment, move to assigned_pickup
-                    if order.status == 'pending_assignment':
+                    # If status is pending_assignment or requested, move to assigned_pickup
+                    if order.status in ['pending_assignment', 'requested']:
                         order.status = 'assigned_pickup'
                     print(f"[DEBUG] Pickup rider assigned: {rider.username}")
 
@@ -423,7 +423,7 @@ class OrderUpdateView(APIView):
                     if order.status in ['requested', 'pending_assignment', 'assigned_pickup', 'picked', 'in_progress', 'washed', 'folded']:
                         order.pickup_rider = rider
                         order.rider = rider
-                        if order.status == 'pending_assignment':
+                        if order.status in ['pending_assignment', 'requested']:
                             order.status = 'assigned_pickup'
                     elif order.status in ['ready', 'pending_delivery']:
                         order.delivery_rider = rider
