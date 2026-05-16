@@ -7,7 +7,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('users', '0007_alter_user_phone_passwordresetcode'),
-        ('users', '0008_alter_user_phone_passwordresetcode'),
+        ('users', '0007_clean_duplicate_empty_phones'),
     ]
 
     operations = [

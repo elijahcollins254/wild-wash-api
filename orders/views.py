@@ -323,6 +323,7 @@ class OrderUpdateView(APIView):
             status_changed_to_ready = new_status and new_status.lower() == 'ready' and old_status.lower() != 'ready'
             status_changed_to_picked = new_status and new_status.lower() == 'picked' and old_status.lower() != 'picked'
             status_changed_to_delivered = new_status and new_status.lower() == 'delivered' and old_status.lower() != 'delivered'
+            status_changed_to_washed = new_status and new_status.lower() == 'washed' and old_status.lower() != 'washed'
 
             # Capture old values before update
             old_values = {
