@@ -954,6 +954,41 @@ class OrderListCreateView(generics.ListCreateAPIView):
             from .serializers import OrderListLightSerializer
             return OrderListLightSerializer
         return OrderCreateSerializer
+    
+    def get_serializer(self, *args, **kwargs):
+        """
+        Support ?fields= query parameter to request only specific fields
+        Example: /orders/?fields=id,code,status,price
+        This reduces response payload size and speeds up serialization
+        """
+        serializer_class = self.get_serializer_class()
+        kwargs.setdefault('context', self.get_serializer_context())
+        
+        # Get fields parameter if provided
+        fields_param = self.request.query_params.get('fields')
+        if fields_param and self.request.method == 'GET':
+            # Parse the fields list
+            requested_fields = set(f.strip() for f in fields_param.split(',') if f.strip())
+            
+            # Create a dynamic serializer with only requested fields
+            if requested_fields:
+                class DynamicFieldsSerializer(serializer_class):
+                    def __init__(self, *args, **kwargs):
+                        super().__init__(*args, **kwargs)
+                        
+                        # Get all field names from the serializer
+                        allowed_fields = set(self.fields.keys())
+                        
+                        # Calculate which fields to drop
+                        fields_to_drop = allowed_fields - requested_fields
+                        
+                        # Remove fields not in the request
+                        for field_name in fields_to_drop:
+                            self.fields.pop(field_name, None)
+                
+                return DynamicFieldsSerializer(*args, **kwargs)
+        
+        return serializer_class(*args, **kwargs)
 
     def get_permissions(self):
         """
