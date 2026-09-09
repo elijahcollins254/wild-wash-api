@@ -73,6 +73,8 @@ class OrderCreateSerializer(serializers.ModelSerializer):
             "service_location",
             "description",
             "pickup_address",
+            "pickup_latitude",
+            "pickup_longitude",
             "dropoff_address",
             "requested_pickup_at",
             "urgency",

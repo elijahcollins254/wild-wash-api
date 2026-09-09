@@ -49,6 +49,8 @@ class Order(models.Model):
     )
     code = models.CharField(max_length=32, unique=True, blank=True)  # e.g. "WW-12345"
     pickup_address = models.TextField()
+    pickup_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    pickup_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     dropoff_address = models.TextField()
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='requested')
     urgency = models.IntegerField(default=1)  # e.g. 1–5 urgency level
