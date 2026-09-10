@@ -4,7 +4,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('users', '0006_add_staff_types'),
+        ('users', '0013_alter_user_role_alter_user_staff_type'),
     ]
 
     operations = [
