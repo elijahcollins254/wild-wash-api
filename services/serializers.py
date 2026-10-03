@@ -8,13 +8,8 @@ class ServiceSerializer(serializers.ModelSerializer):
     category = serializers.CharField(source='category.slug', read_only=True, allow_null=True)
 
     def get_image_url(self, obj):
-        """Return full URL for the image"""
-        if obj.image:
-            request = self.context.get('request')
-            if request:
-                return request.build_absolute_uri(obj.image.url)
-            return obj.image.url
-        return None
+        """Return only the admin-configured URL; clients choose their own fallback."""
+        return obj.image_link or None
 
     class Meta:
         model = Service

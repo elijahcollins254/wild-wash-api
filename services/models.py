@@ -25,6 +25,12 @@ class Service(models.Model):
     category_name = models.CharField(max_length=30, null=True, blank=True, help_text='Legacy: kept for migration purposes')
     price = models.DecimalField(max_digits=10, decimal_places=2)
     description = models.TextField(blank=True)
+    image_link = models.URLField(
+        max_length=1000,
+        blank=True,
+        verbose_name='Image URL',
+        help_text='External image URL. When provided, this is used instead of the uploaded image.',
+    )
     image = models.ImageField(upload_to='services/', null=True, blank=True, help_text='Service image')
     is_active = models.BooleanField(default=True, help_text='Inactive services will be hidden from the website')
     created_at = models.DateTimeField(auto_now_add=True, null=True)
