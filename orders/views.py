@@ -324,6 +324,9 @@ class OrderUpdateView(APIView):
                     {'error': f'Cannot transition from {old_status} to {new_status}'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
+
+            if isinstance(new_status, str):
+                new_status = new_status.lower()
             
             status_changed_to_ready = new_status and new_status.lower() == 'ready' and old_status.lower() != 'ready'
             status_changed_to_picked = new_status and new_status.lower() == 'picked' and old_status.lower() != 'picked'

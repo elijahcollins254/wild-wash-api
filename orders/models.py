@@ -387,31 +387,10 @@ class Order(models.Model):
             return self.get_status_display()
         return self.get_status_display()
 
-    # Valid status transitions
-    VALID_TRANSITIONS = {
-        'requested': ['pending_assignment', 'cancelled'],
-        'pending_assignment': ['assigned_pickup', 'cancelled'],
-        'assigned_pickup': ['picked', 'cancelled'],
-        'picked': ['in_progress', 'cancelled'],
-        'in_progress': ['washed', 'cancelled'],
-        'washed': ['folded', 'cancelled'],
-        'folded': ['ready', 'cancelled'],
-        'ready': ['pending_delivery', 'cancelled'],
-        'pending_delivery': ['assigned_delivery', 'cancelled'],
-        'assigned_delivery': ['delivered', 'cancelled'],
-        'delivered': ['cancelled'],
-        'cancelled': [],
-    }
-
     def can_transition_to(self, new_status):
-        """Check if this order can transition from current status to new status"""
-        current = self.status.lower()
-        new = new_status.lower()
-        
-        if current not in self.VALID_TRANSITIONS:
-            return False
-        
-        return new in self.VALID_TRANSITIONS[current]
+        """Check whether the requested status is one of the supported statuses."""
+        valid_statuses = {value for value, _label in self.STATUS_CHOICES}
+        return isinstance(new_status, str) and new_status.lower() in valid_statuses
 
     def is_assigned_to_pickup_rider(self, user):
         """Check if user is the assigned pickup rider"""
