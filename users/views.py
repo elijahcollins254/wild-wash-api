@@ -314,7 +314,7 @@ class DataDeletionRequestView(APIView):
     def post(self, request):
         serializer = DataDeletionRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        deletion_request = serializer.save(
+        serializer.save(
             user=request.user,
             account_email=request.user.email or '',
             account_phone=request.user.phone or '',
@@ -322,7 +322,6 @@ class DataDeletionRequestView(APIView):
         return Response(
             {
                 'detail': 'Your deletion request has been submitted for review.',
-                'request_id': deletion_request.id,
             },
             status=status.HTTP_201_CREATED,
         )

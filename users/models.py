@@ -214,4 +214,4 @@ class DataDeletionRequest(models.Model):
         ordering = ['-created_at']
 
     def __str__(self):
-        return f"{self.get_request_type_display()} #{self.pk} ({self.status})"
+        return f"{self.request_type} #{self.pk} ({self.status})"
