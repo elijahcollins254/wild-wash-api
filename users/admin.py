@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth import get_user_model
-from .models import Location
+from .models import DataDeletionRequest, Location
 
 User = get_user_model()
 
@@ -49,3 +49,12 @@ class UserAdmin(BaseUserAdmin):
         if db_field.name == "service_location" and not request.user.is_superuser:
             kwargs["queryset"] = Location.objects.filter(id=request.user.service_location_id)
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
+
+
+@admin.register(DataDeletionRequest)
+class DataDeletionRequestAdmin(admin.ModelAdmin):
+    list_display = ('id', 'request_type', 'account_email', 'account_phone', 'status', 'created_at')
+    list_filter = ('request_type', 'status', 'created_at')
+    search_fields = ('account_email', 'account_phone', 'details')
+    readonly_fields = ('user', 'account_email', 'account_phone', 'request_type', 'details', 'created_at')
+    fields = ('user', 'account_email', 'account_phone', 'request_type', 'details', 'status', 'review_notes', 'created_at', 'updated_at')

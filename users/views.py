@@ -14,6 +14,7 @@ from .serializers import (
     LocationSerializer, StaffCreateSerializer, ActivityLogSerializer
 )
 from .models import Location, ActivityLog
+from .serializers import DataDeletionRequestSerializer
 from .permissions import LocationBasedPermission
 
 from http.client import HTTPException
@@ -154,6 +155,8 @@ class UserViewSet(viewsets.ModelViewSet):
         # Allow anyone to create (signup) via create()
         if self.action == 'create':
             return [permissions.AllowAny()]
+        if self.action == 'destroy':
+            return [permissions.IsAdminUser()]
         return super().get_permissions()
 
     def get_serializer_class(self):
@@ -305,6 +308,26 @@ class ChangePasswordView(APIView):
 
 
 @method_decorator(csrf_exempt, name='dispatch')
+class DataDeletionRequestView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = DataDeletionRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        deletion_request = serializer.save(
+            user=request.user,
+            account_email=request.user.email or '',
+            account_phone=request.user.phone or '',
+        )
+        return Response(
+            {
+                'detail': 'Your deletion request has been submitted for review.',
+                'request_id': deletion_request.id,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
 class RegisterView(APIView):
     permission_classes = [permissions.AllowAny]
 

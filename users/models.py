@@ -180,3 +180,38 @@ class ActivityLog(models.Model):
 
     def __str__(self):
         return f"{self.user.username} - {self.action} - {self.timestamp}"
+
+
+class DataDeletionRequest(models.Model):
+    REQUEST_TYPE_CHOICES = (
+        ('account', 'Account and associated data'),
+        ('data', 'Selected personal data'),
+    )
+    STATUS_CHOICES = (
+        ('pending', 'Pending'),
+        ('in_progress', 'In progress'),
+        ('completed', 'Completed'),
+        ('rejected', 'Rejected'),
+    )
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='data_deletion_requests',
+    )
+    request_type = models.CharField(max_length=20, choices=REQUEST_TYPE_CHOICES)
+    details = models.TextField(blank=True)
+    account_email = models.EmailField(blank=True)
+    account_phone = models.CharField(max_length=32, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    review_notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.get_request_type_display()} #{self.pk} ({self.status})"

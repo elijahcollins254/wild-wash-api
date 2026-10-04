@@ -1,7 +1,7 @@
 # users/serializers.py
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
-from .models import Location, ActivityLog
+from .models import DataDeletionRequest, Location, ActivityLog
 
 User = get_user_model()
 
@@ -165,3 +165,17 @@ class ActivityLogSerializer(serializers.ModelSerializer):
             'admin_user', 'admin_username', 'timestamp', 'changes'
         ]
         read_only_fields = ['id', 'timestamp', 'admin_user']
+
+
+class DataDeletionRequestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DataDeletionRequest
+        fields = ['id', 'request_type', 'details', 'status', 'created_at']
+        read_only_fields = ['id', 'status', 'created_at']
+
+    def validate(self, attrs):
+        if attrs.get('request_type') == 'data' and not attrs.get('details', '').strip():
+            raise serializers.ValidationError({
+                'details': 'Describe which personal data you want deleted.'
+            })
+        return attrs
