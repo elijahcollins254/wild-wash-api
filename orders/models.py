@@ -432,11 +432,13 @@ class Order(models.Model):
         remaining = max((total or Decimal('0')) - paid, Decimal('0'))
         payable = max(remaining - pending, Decimal('0'))
         progress = min(int(paid * 100 / total), 100) if total and total > 0 else 0
+        overpaid = max(paid - total, Decimal('0')) if staff_price is not None and total is not None else Decimal('0')
 
         return {
             'estimate_total': float(estimate) if estimate is not None else None,
             'final_total': float(total) if total is not None else None,
             'paid_amount': float(paid),
+            'overpaid_amount': float(overpaid),
             'pending_amount': float(pending),
             'remaining_amount': float(remaining),
             'payable_amount': float(payable),

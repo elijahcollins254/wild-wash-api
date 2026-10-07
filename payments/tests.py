@@ -82,3 +82,14 @@ class OrderPartialPaymentTests(TestCase):
 
 		self.create_payment('200.00')
 		self.assertTrue(self.order.is_paid())
+
+	def test_lower_final_price_reports_overpayment(self):
+		self.create_payment('1000.00')
+		self.order.washer_price = Decimal('800.00')
+		self.order.washed_at = timezone.now()
+		self.order.save(update_fields=['washer_price', 'washed_at'])
+
+		summary = self.order.get_payment_summary()
+		self.assertEqual(summary['remaining_amount'], 0.0)
+		self.assertEqual(summary['overpaid_amount'], 200.0)
+		self.assertTrue(self.order.is_paid())
