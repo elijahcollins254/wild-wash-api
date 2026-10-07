@@ -290,6 +290,7 @@ class OrderListSerializer(serializers.ModelSerializer):
     timeline = serializers.SerializerMethodField()
     order_items = serializers.SerializerMethodField()
     is_paid = serializers.SerializerMethodField()
+    payment_summary = serializers.SerializerMethodField()
     washer_name = serializers.SerializerMethodField()
     folder_name = serializers.SerializerMethodField()
     fumigator_name = serializers.SerializerMethodField()
@@ -297,8 +298,11 @@ class OrderListSerializer(serializers.ModelSerializer):
     staff_input_details = serializers.SerializerMethodField()
     
     def get_is_paid(self, obj):
-        """Return whether this order has been paid"""
+        """Return whether successful payments cover the current order total."""
         return obj.is_paid()
+
+    def get_payment_summary(self, obj):
+        return obj.get_payment_summary()
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -600,6 +604,7 @@ class OrderListSerializer(serializers.ModelSerializer):
             "timeline",
             "order_items",
             "is_paid",
+            "payment_summary",
             "payment_method",
             # Manual order fields
             "order_type",

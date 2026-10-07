@@ -27,7 +27,8 @@ class Payment(models.Model):
     ]
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='payments')
-    order_id = models.PositiveIntegerField(null=True, blank=True, help_text='Optional: link to Order PK if Order model is in another app')
+    order = models.ForeignKey('orders.Order', on_delete=models.SET_NULL, null=True, blank=True, related_name='payments', db_column='order_fk_id')
+    legacy_order_id = models.PositiveIntegerField(db_column='order_id', null=True, blank=True, help_text='Legacy numeric order reference')
     # If you prefer a direct FK, use: order = models.ForeignKey('orders.Order', on_delete=models.SET_NULL, null=True, blank=True)
 
     provider = models.CharField(max_length=50, default='mpesa')

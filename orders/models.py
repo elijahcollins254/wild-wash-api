@@ -1,5 +1,6 @@
 # orders/models.py
 from django.db import models
+from django.db.models import Q, Sum
 from django.conf import settings
 from services.models import Service
 from users.models import Location
@@ -409,12 +410,39 @@ class Order(models.Model):
         return self.is_assigned_to_pickup_rider(user) or self.is_assigned_to_delivery_rider(user)
 
     def is_paid(self):
-        """Check if this order has a successful payment"""
+        """Check whether successful payments cover the current order total."""
+        summary = self.get_payment_summary()
+        total = summary['final_total']
+        return summary['price_finalized'] and total is not None and total > 0 and summary['paid_amount'] >= total
+
+    def get_payment_summary(self):
+        """Return the estimate/final price and payment balance for this order."""
         from payments.models import Payment
-        return Payment.objects.filter(
-            order_id=self.id,
-            status=Payment.STATUS_SUCCESS
-        ).exists()
+
+        service_total = sum((service.price for service in self.services.all()), Decimal('0'))
+        estimate = service_total or self.price
+        staff_price = self.get_latest_staff_price()
+        total = Decimal(str(staff_price)) if staff_price is not None else estimate
+        totals = Payment.objects.filter(order=self).aggregate(
+            paid=Sum('amount', filter=Q(status=Payment.STATUS_SUCCESS)),
+            pending=Sum('amount', filter=Q(status__in=[Payment.STATUS_PENDING, Payment.STATUS_INITIATED])),
+        )
+        paid = totals['paid'] or Decimal('0')
+        pending = totals['pending'] or Decimal('0')
+        remaining = max((total or Decimal('0')) - paid, Decimal('0'))
+        payable = max(remaining - pending, Decimal('0'))
+        progress = min(int(paid * 100 / total), 100) if total and total > 0 else 0
+
+        return {
+            'estimate_total': float(estimate) if estimate is not None else None,
+            'final_total': float(total) if total is not None else None,
+            'paid_amount': float(paid),
+            'pending_amount': float(pending),
+            'remaining_amount': float(remaining),
+            'payable_amount': float(payable),
+            'paid_percent': progress,
+            'price_finalized': staff_price is not None,
+        }
 
     def __str__(self):
         return f"Order #{self.id} - {self.user.username if self.user else 'Guest'}"

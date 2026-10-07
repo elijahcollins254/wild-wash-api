@@ -1407,18 +1407,20 @@ class OrderPaymentStatusView(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
             
-            # Get the latest payment for this order
+            # Return the latest attempt together with the cumulative order balance.
             from payments.models import Payment
             try:
-                payment = Payment.objects.filter(order_id=order.id).latest('created_at')
-                return Response({
+                payment = Payment.objects.filter(order=order).latest('created_at')
+                result = {
                     'status': payment.status,
                     'message': f'Payment is {payment.status}',
                     'checkout_request_id': payment.provider_reference,
                     'order_id': order.code,
                     'amount': float(payment.amount),
                     'delivery_requested': order.delivery_requested,
-                })
+                    'payment_summary': order.get_payment_summary(),
+                }
+                return Response(result)
             except Payment.DoesNotExist:
                 return Response({
                     'status': 'pending',
@@ -1427,7 +1429,8 @@ class OrderPaymentStatusView(APIView):
                     'order_id': order.code,
                     'amount': 0,
                     'delivery_requested': order.delivery_requested,
-                }, status=status.HTTP_404_NOT_FOUND)
+                    'payment_summary': order.get_payment_summary(),
+                })
                 
         except Order.DoesNotExist:
             return Response(
@@ -1462,18 +1465,9 @@ class RequestDeliveryView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Check if order has a payment
-            from payments.models import Payment
-            try:
-                payment = Payment.objects.filter(order_id=order.id).latest('created_at')
-                if payment.status != 'success':
-                    return Response(
-                        {'detail': 'Payment must be successful before requesting delivery'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-            except Payment.DoesNotExist:
+            if not order.is_paid():
                 return Response(
-                    {'detail': 'No payment found for this order'},
+                    {'detail': 'The order must be fully paid before requesting delivery'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
             

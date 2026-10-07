@@ -432,41 +432,17 @@ class BNPLViewSet(viewsets.GenericViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # SECURITY: Validate that the amount matches the actual order price
-            validation_error = self._validate_bnpl_order_amount(order_id, amount)
+            try:
+                order = Order.objects.get(code=order_id)
+            except Order.DoesNotExist:
+                return Response({'detail': f'Order not found: {order_id}'}, status=status.HTTP_400_BAD_REQUEST)
+
+            if order.user_id != request.user.id and not request.user.is_staff:
+                return Response({'detail': 'You do not have permission to pay for this order'}, status=status.HTTP_403_FORBIDDEN)
+
+            validation_error = self._validate_bnpl_order_amount(order, amount)
             if validation_error:
                 return validation_error
-
-            # Extract numeric part from order_id (e.g., 'WW-00225' -> 225)
-            # For BNPL or non-numeric references, use a smaller hash
-            order_id_numeric = None
-            if isinstance(order_id, str):
-                import re
-                # Try to find regular order IDs first (WW-00225 format)
-                numeric_matches = re.findall(r'\d+', order_id)
-                if numeric_matches:
-                    try:
-                        # Use the first number (usually the order number)
-                        first_num = int(numeric_matches[0])
-                        # Ensure it fits in PositiveIntegerField (max 2147483647)
-                        if first_num <= 2147483647:
-                            order_id_numeric = first_num
-                        else:
-                            # If too large, use modulo
-                            order_id_numeric = first_num % 1000000
-                    except (ValueError, TypeError):
-                        pass
-                
-                # If we couldn't extract a number, use hash of the string
-                if order_id_numeric is None:
-                    order_id_numeric = abs(hash(order_id)) % 1000000
-            else:
-                try:
-                    order_id_numeric = int(order_id)
-                    if order_id_numeric > 2147483647:
-                        order_id_numeric = order_id_numeric % 1000000
-                except (ValueError, TypeError):
-                    order_id_numeric = None
 
             # Get or create BNPL user
             bnpl_user = BNPLUser.objects.get(user=request.user)
@@ -502,7 +478,8 @@ class BNPLViewSet(viewsets.GenericViewSet):
             # Create Payment record
             payment = Payment.objects.create(
                 user=request.user,
-                order_id=order_id_numeric,
+                order=order,
+                order_id=order.id,
                 amount=amount_decimal,
                 phone_number=bnpl_user.phone_number,
                 provider='bnpl',
@@ -516,12 +493,8 @@ class BNPLViewSet(viewsets.GenericViewSet):
             payment.mark_success()
 
             # Update the order's payment_method to reflect BNPL
-            try:
-                order = Order.objects.get(code=order_id)
-                order.payment_method = 'bnpl'
-                order.save(update_fields=['payment_method'])
-            except Order.DoesNotExist:
-                logger.warning(f"Order with code {order_id} not found when processing BNPL payment")
+            order.payment_method = 'bnpl'
+            order.save(update_fields=['payment_method'])
 
             serializer = self.get_serializer(bnpl_user)
             return Response(
@@ -545,72 +518,24 @@ class BNPLViewSet(viewsets.GenericViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    def _validate_bnpl_order_amount(self, order_id, amount):
-        """Validate that the provided amount matches the actual order price.
-        
-        SECURITY: This prevents users from modifying the amount in the URL
-        to pay less than the actual order requires. ONLY actual_price is accepted,
-        no fallback to estimated price field.
-        
-        Args:
-            order_id: The order code (e.g., 'WW-00225')
-            amount: The amount being paid
-            
-        Returns:
-            None if valid, or a Response object with error details if invalid
-        """
+    def _validate_bnpl_order_amount(self, order, amount):
+        """Validate that a partial BNPL payment does not exceed the order balance."""
         try:
-            from decimal import Decimal
-            
-            # Game wallet or non-order payments don't need validation
-            if order_id == 'GAME_WALLET_TOPUP' or order_id is None:
-                return None
-
-            # Try to find the order by its code
-            try:
-                order = Order.objects.get(code=order_id)
-            except Order.DoesNotExist:
-                logger.warning(f"[SECURITY] BNPL: Order not found with code: {order_id}")
-                return Response(
-                    {'detail': f'Order not found: {order_id}'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            # SECURITY: ONLY use actual_price from staff input, no fallback to estimated price
-            order_price = order.get_latest_staff_price()
-            
-            if order_price is None:
-                logger.error(f"[SECURITY] BNPL: Order {order_id} does not have actual_price set by staff. Estimated price (package calculation) is not accepted for checkout.")
-                return Response(
-                    {'detail': f'Order cannot be checked out: Staff must set the actual price. The package-calculated price is only an estimate.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            # Convert to Decimal for accurate comparison
-            order_price_decimal = Decimal(str(order_price))
             amount_decimal = Decimal(str(amount))
-            
-            # Check if amounts match (allow 0.01 tolerance for rounding)
-            if abs(order_price_decimal - amount_decimal) > Decimal('0.01'):
-                logger.warning(
-                    f"[SECURITY] FRAUD ALERT - BNPL Amount mismatch for order {order_id}: "
-                    f"requested={amount}, actual={order_price}"
-                )
+            payable = Decimal(str(order.get_payment_summary()['payable_amount']))
+            if amount_decimal > payable:
                 return Response(
                     {
-                        'detail': f'Payment amount does not match order total',
-                        'expected_amount': float(order_price),
-                        'provided_amount': amount,
-                        'order_id': order_id
+                        'detail': 'Payment amount exceeds the remaining balance',
+                        'payable_amount': float(payable),
+                        'provided_amount': float(amount_decimal),
+                        'order_id': order.code,
                     },
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
-            logger.info(f"[SECURITY] BNPL order amount validated for {order_id}: {amount} KES")
             return None
-            
         except Exception as e:
-            logger.error(f"[SECURITY] Error validating BNPL order amount: {str(e)}", exc_info=True)
+            logger.error(f"Error validating BNPL order amount: {str(e)}", exc_info=True)
             return Response(
                 {'detail': f'Error validating order: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -641,7 +566,7 @@ class BNPLViewSet(viewsets.GenericViewSet):
 
 class MpesaSTKPushView(views.APIView):
     permission_classes = []  # Allow unauthenticated access
-    authentication_classes = []
+    authentication_classes = [TokenAuthentication]
 
     def get(self, request):
         """Get user's phone number for checkout (if authenticated)."""
@@ -684,53 +609,33 @@ class MpesaSTKPushView(views.APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Convert amount to numeric
+        # M-Pesa accepts whole shillings only.
         try:
-            amount_float = float(amount)
-            amount = int(amount_float)
-        except (ValueError, TypeError):
+            amount_decimal = Decimal(str(amount))
+            if amount_decimal <= 0 or amount_decimal != amount_decimal.to_integral_value():
+                raise ValueError('Amount must be a positive whole number')
+            amount = int(amount_decimal)
+        except (ValueError, TypeError, ArithmeticError):
             return Response(
-                {'detail': 'Invalid amount format'},
+                {'detail': 'Amount must be a positive whole number of KES'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # SECURITY: Validate that the amount matches the actual order price
-        validation_error = self._validate_mpesa_order_amount(order_id, amount_float)
-        if validation_error:
-            return validation_error
-        
-        # Store original order_id for reference, extract numeric part if available
-        order_reference = order_id
-        order_id_numeric = None
-        
-        # Try to extract numeric part from order_id (e.g., 'WW-00176' -> 176)
-        if isinstance(order_id, str):
-            import re
-            # Try to find regular order IDs first (WW-00225 format)
-            numeric_matches = re.findall(r'\d+', order_id)
-            if numeric_matches:
-                try:
-                    # Use the first number (usually the order number)
-                    first_num = int(numeric_matches[0])
-                    # Ensure it fits in PositiveIntegerField (max 2147483647)
-                    if first_num <= 2147483647:
-                        order_id_numeric = first_num
-                    else:
-                        # If too large, use modulo
-                        order_id_numeric = first_num % 1000000
-                except (ValueError, TypeError):
-                    pass
-            
-            # If we couldn't extract a number, use hash of the string
-            if order_id_numeric is None:
-                order_id_numeric = abs(hash(order_id)) % 1000000
-        else:
+        order = None
+        if order_id is not None and order_id != 'GAME_WALLET_TOPUP':
+            if not request.user.is_authenticated:
+                return Response({'detail': 'Authentication is required to pay for an order'}, status=status.HTTP_401_UNAUTHORIZED)
             try:
-                order_id_numeric = int(order_id)
-                if order_id_numeric > 2147483647:
-                    order_id_numeric = order_id_numeric % 1000000
-            except (ValueError, TypeError):
-                order_id_numeric = None
+                order = Order.objects.get(code=order_id)
+            except Order.DoesNotExist:
+                return Response({'detail': f'Order not found: {order_id}'}, status=status.HTTP_400_BAD_REQUEST)
+            if order.user_id != request.user.id and not request.user.is_staff:
+                return Response({'detail': 'You do not have permission to pay for this order'}, status=status.HTTP_403_FORBIDDEN)
+            validation_error = self._validate_mpesa_order_amount(order, amount_decimal)
+            if validation_error:
+                return validation_error
+
+        order_reference = order_id
         
         # Validate phone number format (Kenyan format)
         if not self._validate_phone(phone):
@@ -773,7 +678,8 @@ class MpesaSTKPushView(views.APIView):
             checkout_request_id = stk_response.get('CheckoutRequestID', '')
             payment = Payment.objects.create(
                 user=request.user if request.user.is_authenticated else None,
-                order_id=order_id_numeric,
+                order=order,
+                order_id=order.id if order else None,
                 amount=amount,
                 phone_number=phone,
                 provider='mpesa',
@@ -802,71 +708,23 @@ class MpesaSTKPushView(views.APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    def _validate_mpesa_order_amount(self, order_id, amount):
-        """Validate that the provided amount matches the actual order price.
-        
-        SECURITY: This prevents users from modifying the amount in the URL
-        to pay less than the actual order requires. ONLY actual_price is accepted,
-        no fallback to estimated price field.
-        
-        Args:
-            order_id: The order code (e.g., 'WW-00225') or None for game wallet top-ups
-            amount: The amount being paid
-            
-        Returns:
-            None if valid, or a Response object with error details if invalid
-        """
+    def _validate_mpesa_order_amount(self, order, amount):
+        """Validate that a partial M-Pesa payment does not exceed the remaining order balance."""
         try:
-            # Game wallet top-ups don't need order validation
-            if order_id is None or order_id == 'GAME_WALLET_TOPUP':
-                return None
-
-            # Try to find the order by its code
-            try:
-                order = Order.objects.get(code=order_id)
-            except Order.DoesNotExist:
-                logger.warning(f"[SECURITY] Order not found with code: {order_id}")
-                return Response(
-                    {'detail': f'Order not found: {order_id}'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            # SECURITY: ONLY use actual_price from staff input, no fallback to estimated price
-            from decimal import Decimal
-            order_price = order.get_latest_staff_price()
-            
-            if order_price is None:
-                logger.error(f"[SECURITY] Order {order_id} does not have actual_price set by staff. Estimated price (package calculation) is not accepted for checkout.")
-                return Response(
-                    {'detail': f'Order cannot be checked out: Staff must set the actual price. The package-calculated price is only an estimate.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            # Convert to Decimal for accurate comparison
-            order_price_decimal = Decimal(str(order_price))
-            amount_decimal = Decimal(str(amount))
-            
-            # Check if amounts match (allow 0.01 tolerance for rounding)
-            if abs(order_price_decimal - amount_decimal) > Decimal('0.01'):
-                logger.warning(
-                    f"[SECURITY] FRAUD ALERT - Amount mismatch for order {order_id}: "
-                    f"requested={amount}, actual={order_price}"
-                )
+            payable = Decimal(str(order.get_payment_summary()['payable_amount']))
+            if Decimal(str(amount)) > payable:
                 return Response(
                     {
-                        'detail': f'Payment amount does not match order total',
-                        'expected_amount': float(order_price),
-                        'provided_amount': amount,
-                        'order_id': order_id
+                        'detail': 'Payment amount exceeds the remaining balance',
+                        'payable_amount': float(payable),
+                        'provided_amount': float(amount),
+                        'order_id': order.code,
                     },
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
-            logger.info(f"[SECURITY] Order amount validated successfully for {order_id}: {amount} KES")
             return None
-            
         except Exception as e:
-            logger.error(f"[SECURITY] Error validating M-Pesa order amount: {str(e)}", exc_info=True)
+            logger.error(f"Error validating M-Pesa order amount: {str(e)}", exc_info=True)
             return Response(
                 {'detail': f'Error validating order: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
