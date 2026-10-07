@@ -1022,8 +1022,12 @@ class OrderListCreateView(generics.ListCreateAPIView):
         if code:
             return queryset.filter(code__iexact=code.strip())
 
+        # Role-specific staff accounts may not have Django's is_staff flag set.
+        staff_roles = {'admin', 'staff', 'washer', 'folder', 'fumigator'}
+        is_location_staff = user.is_staff or user.role in staff_roles
+
         # For staff users, filter by their service location
-        if user.is_authenticated and user.is_staff and not user.is_superuser:
+        if user.is_authenticated and is_location_staff and not user.is_superuser:
             print(f"\n[DEBUG Orders] Staff user: {user.username} (ID: {user.id})")
             print(f"[DEBUG Orders] Staff service_location: {user.service_location} (ID: {user.service_location.id if user.service_location else 'None'})")
             
@@ -1037,7 +1041,7 @@ class OrderListCreateView(generics.ListCreateAPIView):
                 print(f"[DEBUG Orders] ⚠️ Staff has no service_location assigned, returning no orders")
                 return Order.objects.none()
         # For regular users, show only their orders
-        elif user.is_authenticated and not user.is_staff:
+        elif user.is_authenticated and not is_location_staff:
             queryset = queryset.filter(user=user)
         
         # === BACKEND FILTERING SUPPORT (for performance optimization) ===
