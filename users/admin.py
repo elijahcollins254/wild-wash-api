@@ -7,9 +7,9 @@ User = get_user_model()
 
 @admin.register(Location)
 class LocationAdmin(admin.ModelAdmin):
-    list_display = ('name', 'is_active', 'created_at')
-    search_fields = ('name', 'description')
-    list_filter = ('is_active',)
+    list_display = ('name', 'region', 'is_active', 'created_at')
+    search_fields = ('name', 'region', 'description')
+    list_filter = ('region', 'is_active')
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):

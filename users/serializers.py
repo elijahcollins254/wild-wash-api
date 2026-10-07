@@ -8,7 +8,7 @@ User = get_user_model()
 class LocationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Location
-        fields = ['id', 'name', 'description', 'is_active', 'created_at']
+        fields = ['id', 'name', 'region', 'description', 'is_active', 'created_at']
 
 class StaffCreateSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)

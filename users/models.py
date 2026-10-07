@@ -44,6 +44,7 @@ def format_phone_number(phone_number):
 
 class Location(models.Model):
     name = models.CharField(max_length=100, unique=True)
+    region = models.CharField(max_length=100, blank=True, default='')
     description = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)

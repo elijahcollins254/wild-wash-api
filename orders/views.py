@@ -289,6 +289,42 @@ class RiderOrderListView(generics.ListAPIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
+class AssignOrderLocationView(APIView):
+    """Assign an order to an active laundry location. Restricted to superusers."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        if not request.user.is_superuser:
+            return Response({'error': 'Only administrators can assign laundry locations'}, status=status.HTTP_403_FORBIDDEN)
+
+        order_id = request.data.get('order_id')
+        location_id = request.data.get('service_location_id')
+        if not order_id or not location_id:
+            return Response({'error': 'order_id and service_location_id are required'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            order_id = int(order_id)
+            location_id = int(location_id)
+        except (TypeError, ValueError):
+            return Response({'error': 'order_id and service_location_id must be integers'}, status=status.HTTP_400_BAD_REQUEST)
+
+        order = Order.objects.filter(pk=order_id).first()
+        location = Location.objects.filter(pk=location_id, is_active=True).first()
+        if not order:
+            return Response({'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
+        if not location:
+            return Response({'error': 'Active laundry location not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        order.service_location = location
+        order.save(update_fields=['service_location'])
+        return Response({
+            'service_location': {
+                'id': location.id,
+                'name': location.name,
+                'region': location.region,
+            }
+        }, status=status.HTTP_200_OK)
+
+
 class OrderUpdateView(APIView):
     """
     PATCH -> Update order status, quantity, weight, and description

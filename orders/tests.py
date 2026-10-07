@@ -66,6 +66,69 @@ class StaffOrderListTest(TestCase):
 		self.assertEqual(response.data['results'][0]['id'], local_order.id)
 
 
+class OrderLaundryAssignmentTests(TestCase):
+	def setUp(self):
+		suffix = uuid4().hex
+		self.location = Location.objects.create(name=f'Laundry {suffix}', region='Nairobi')
+		self.order = Order.objects.create(
+			code=f'WW-ASSIGN-{suffix[:20]}',
+			pickup_address='Customer pickup',
+			dropoff_address='Customer dropoff',
+		)
+		self.admin = User.objects.create_user(
+			username=f'location_admin_{suffix}',
+			password='testpass123',
+			is_staff=True,
+			is_superuser=True,
+		)
+		self.client = APIClient()
+
+	def test_superuser_can_assign_order_to_active_laundry(self):
+		self.client.force_authenticate(user=self.admin)
+
+		response = self.client.post('/orders/assign-location/', {
+			'order_id': self.order.id,
+			'service_location_id': self.location.id,
+		}, format='json')
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(response.data['service_location']['id'], self.location.id)
+		self.order.refresh_from_db()
+		self.assertEqual(self.order.service_location, self.location)
+
+	def test_non_superuser_cannot_assign_laundry(self):
+		staff = User.objects.create_user(
+			username=f'regular_staff_{uuid4().hex}',
+			password='testpass123',
+			is_staff=True,
+			service_location=self.location,
+		)
+		self.client.force_authenticate(user=staff)
+
+		response = self.client.post('/orders/assign-location/', {
+			'order_id': self.order.id,
+			'service_location_id': self.location.id,
+		}, format='json')
+
+		self.assertEqual(response.status_code, 403)
+		self.order.refresh_from_db()
+		self.assertIsNone(self.order.service_location)
+
+	def test_inactive_laundry_cannot_be_assigned(self):
+		self.location.is_active = False
+		self.location.save(update_fields=['is_active'])
+		self.client.force_authenticate(user=self.admin)
+
+		response = self.client.post('/orders/assign-location/', {
+			'order_id': self.order.id,
+			'service_location_id': self.location.id,
+		}, format='json')
+
+		self.assertEqual(response.status_code, 404)
+		self.order.refresh_from_db()
+		self.assertIsNone(self.order.service_location)
+
+
 class OrderCodeSecurityTest(TestCase):
 	def test_new_orders_receive_long_random_codes(self):
 		first_order = Order.objects.create(

@@ -8,11 +8,13 @@ from .views import (
     RequestedOrdersListView,
     StaffCreateOrderView,
     OrderPaymentStatusView,
-    RequestDeliveryView
+    RequestDeliveryView,
+    AssignOrderLocationView,
 )
 
 urlpatterns = [
     path('', OrderListCreateView.as_view(), name='order-list'),
+    path('assign-location/', AssignOrderLocationView.as_view(), name='order-assign-location'),
     path('update/', OrderUpdateView.as_view(), name='order-update'),
     path('rider/', RiderOrderListView.as_view(), name='rider-order-list'),
     path('requested/', RequestedOrdersListView.as_view(), name='requested-orders-list'),
