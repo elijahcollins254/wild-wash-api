@@ -1016,11 +1016,6 @@ class OrderListCreateView(generics.ListCreateAPIView):
             'user', 'service', 'rider', 'service_location', 
             'pickup_rider', 'delivery_rider', 'created_by'
         )
-        
-        # Filter by order code if provided
-        code = self.request.query_params.get("code")
-        if code:
-            return queryset.filter(code__iexact=code.strip())
 
         # Role-specific staff accounts may not have Django's is_staff flag set.
         staff_roles = {'admin', 'staff', 'washer', 'folder', 'fumigator'}
@@ -1043,6 +1038,11 @@ class OrderListCreateView(generics.ListCreateAPIView):
         # For regular users, show only their orders
         elif user.is_authenticated and not is_location_staff:
             queryset = queryset.filter(user=user)
+
+        # Apply code lookup only after enforcing the caller's normal access scope.
+        code = self.request.query_params.get("code")
+        if code:
+            queryset = queryset.filter(code__iexact=code.strip())
         
         # === BACKEND FILTERING SUPPORT (for performance optimization) ===
         

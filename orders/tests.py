@@ -64,3 +64,39 @@ class StaffOrderListTest(TestCase):
 		self.assertEqual(response.status_code, 200)
 		self.assertEqual(response.data['count'], 1)
 		self.assertEqual(response.data['results'][0]['id'], local_order.id)
+
+
+class OrderCodeSecurityTest(TestCase):
+	def test_new_orders_receive_long_random_codes(self):
+		first_order = Order.objects.create(
+			pickup_address='Pickup',
+			dropoff_address='Dropoff',
+		)
+		second_order = Order.objects.create(
+			pickup_address='Pickup',
+			dropoff_address='Dropoff',
+		)
+
+		self.assertRegex(first_order.code, r'^WW-[A-F0-9]{29}$')
+		self.assertRegex(second_order.code, r'^WW-[A-F0-9]{29}$')
+		self.assertNotEqual(first_order.code, second_order.code)
+		from .serializers import OrderCreateSerializer
+		self.assertEqual(OrderCreateSerializer(first_order).data['code'], first_order.code)
+
+	def test_customer_cannot_look_up_another_customers_order_by_code(self):
+		suffix = uuid4().hex
+		owner = User.objects.create_user(username=f'order_owner_{suffix}', password='testpass123')
+		other_customer = User.objects.create_user(username=f'other_customer_{suffix}', password='testpass123')
+		order = Order.objects.create(
+			user=owner,
+			code=f'WW-PRIVATE-{suffix[:16]}',
+			pickup_address='Pickup',
+			dropoff_address='Dropoff',
+		)
+
+		client = APIClient()
+		client.force_authenticate(user=other_customer)
+		response = client.get(f'/orders/?code={order.code}')
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(response.data['count'], 0)

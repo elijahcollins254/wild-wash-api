@@ -338,7 +338,7 @@ class Order(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.code:
-            self.code = f"WW-{uuid.uuid4().hex[:6].upper()}"
+            self.code = f"WW-{uuid.uuid4().hex[:29].upper()}"
         # Set the first service as primary service for backward compatibility
         if not self.service and self.pk:
             first_service = self.services.first()

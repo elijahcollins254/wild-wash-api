@@ -68,6 +68,7 @@ class OrderCreateSerializer(serializers.ModelSerializer):
         model = Order
         fields = [
             "id",
+            "code",
             "service",
             "services",
             "service_location",
@@ -93,7 +94,7 @@ class OrderCreateSerializer(serializers.ModelSerializer):
             "customer_name",
             "customer_phone",
         ]
-        read_only_fields = ["id", "total_price"]
+        read_only_fields = ["id", "code", "total_price"]
 
     def validate(self, data):
         # basic sanity defaults / checks
@@ -248,8 +249,6 @@ class OrderCreateSerializer(serializers.ModelSerializer):
                         defaults={'quantity': 1}
                     )
         
-        order.code = f"WW-{order.id:05d}"
-        order.save(update_fields=["code"])
         return order
 
     def get_total_price(self, obj):
