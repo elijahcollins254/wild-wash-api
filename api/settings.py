@@ -253,6 +253,17 @@ MPESA_CONSUMER_SECRET = os.getenv('MPESA_CONSUMER_SECRET', '')
 MPESA_BUSINESS_SHORTCODE = os.getenv('MPESA_BUSINESS_SHORTCODE', '')
 MPESA_PASSKEY = os.getenv('MPESA_PASSKEY', '')
 MPESA_CALLBACK_URL = os.getenv('MPESA_CALLBACK_URL', 'https://api.wildwash.co.ke/api/payments/mpesa/callback/')
+MPESA_ENVIRONMENT = os.getenv('MPESA_ENVIRONMENT', 'production').lower()
+
+# Daraja B2C payouts. SecurityCredential must be the RSA-encrypted initiator
+# password generated with Safaricom's certificate; do not store the raw password.
+MPESA_B2C_INITIATOR_NAME = os.getenv('MPESA_B2C_INITIATOR_NAME', '')
+MPESA_B2C_SECURITY_CREDENTIAL = os.getenv('MPESA_B2C_SECURITY_CREDENTIAL', '')
+MPESA_B2C_SHORTCODE = os.getenv('MPESA_B2C_SHORTCODE', MPESA_BUSINESS_SHORTCODE)
+MPESA_B2C_COMMAND_ID = os.getenv('MPESA_B2C_COMMAND_ID', 'BusinessPayment')
+MPESA_B2C_RESULT_URL = os.getenv('MPESA_B2C_RESULT_URL', '')
+MPESA_B2C_TIMEOUT_URL = os.getenv('MPESA_B2C_TIMEOUT_URL', '')
+MPESA_B2C_CALLBACK_TOKEN = os.getenv('MPESA_B2C_CALLBACK_TOKEN', '')
 
 # Africa's Talking Configuration
 AFRICAS_TALKING_API_KEY = os.getenv('AFRICAS_TALKING_API_KEY', '')

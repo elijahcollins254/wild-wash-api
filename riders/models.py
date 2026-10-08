@@ -12,6 +12,7 @@ These models assume you have a custom user model (settings.AUTH_USER_MODEL) and 
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
+import uuid
 
 
 class RiderProfile(models.Model):
@@ -68,4 +69,69 @@ class RiderLocation(models.Model):
 
     def __str__(self):
         return f"{self.rider} @ {self.latitude},{self.longitude} ({self.recorded_at.isoformat()})"
+
+
+class RiderWallet(models.Model):
+    """Available payout balance and M-Pesa destination for one rider."""
+    rider = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='rider_wallet',
+    )
+    balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    payout_phone = models.CharField(max_length=20, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Rider wallet - {self.rider} (KES {self.balance})"
+
+
+class RiderWalletTransaction(models.Model):
+    """Immutable audit entries for credits, withdrawals, and withdrawal reversals."""
+    TYPE_CREDIT = 'credit'
+    TYPE_WITHDRAWAL = 'withdrawal'
+    TYPE_REVERSAL = 'reversal'
+    TYPE_CHOICES = [
+        (TYPE_CREDIT, 'Admin credit'),
+        (TYPE_WITHDRAWAL, 'Withdrawal'),
+        (TYPE_REVERSAL, 'Withdrawal reversal'),
+    ]
+    STATUS_COMPLETED = 'completed'
+    STATUS_PENDING = 'pending'
+    STATUS_FAILED = 'failed'
+    STATUS_CHOICES = [
+        (STATUS_COMPLETED, 'Completed'),
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_FAILED, 'Failed'),
+    ]
+
+    wallet = models.ForeignKey(RiderWallet, on_delete=models.CASCADE, related_name='transactions')
+    transaction_type = models.CharField(max_length=20, choices=TYPE_CHOICES)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_COMPLETED)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    balance_after = models.DecimalField(max_digits=12, decimal_places=2)
+    reference = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    reason = models.TextField(blank=True)
+    payout_phone = models.CharField(max_length=20, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='rider_wallet_actions',
+    )
+    conversation_id = models.CharField(max_length=100, blank=True, db_index=True)
+    originator_conversation_id = models.CharField(max_length=100, blank=True, db_index=True)
+    provider_transaction_id = models.CharField(max_length=100, blank=True)
+    provider_payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['wallet', '-created_at'])]
+
+    def __str__(self):
+        return f"{self.transaction_type} {self.amount} KES ({self.status})"
 

@@ -773,7 +773,7 @@ class MpesaSTKPushView(views.APIView):
         url = config['oauth_url']
         
         logger.info(f"Requesting access token from {url}")
-        logger.info(f"Consumer Key (first 20 chars): {config['consumer_key'][:20] if config['consumer_key'] else 'NOT SET'}")
+        logger.info("Requesting Daraja access token")
         
         try:
             response = requests.get(
@@ -782,12 +782,10 @@ class MpesaSTKPushView(views.APIView):
                 timeout=10
             )
             logger.info(f"OAuth Response status: {response.status_code}")
-            logger.info(f"OAuth Response body: {response.text}")
             
             response.raise_for_status()
             token = response.json()['access_token']
-            logger.info(f"✓ Access token obtained successfully (length: {len(token)})")
-            logger.info(f"Access token (first 20 chars): {token[:20]}...")
+            logger.info("Daraja access token obtained successfully")
             return token
         except requests.exceptions.RequestException as e:
             # Log detailed response information
@@ -798,8 +796,7 @@ class MpesaSTKPushView(views.APIView):
             else:
                 logger.error(f"Failed to get access token: {str(e)}")
             logger.error(f"Credentials issue check:")
-            logger.error(f"  - Consumer Key: {repr(config['consumer_key'][:50] if config['consumer_key'] else 'NOT SET')}...")
-            logger.error(f"  - Consumer Secret: {repr(config['consumer_secret'][:20] if config['consumer_secret'] else 'NOT SET')}...")
+            logger.error("Verify Daraja credentials are configured correctly.")
             raise Exception(f'Failed to get access token: {str(e)}')
 
     def _initiate_stk_push(self, access_token, amount, phone, order_id):
