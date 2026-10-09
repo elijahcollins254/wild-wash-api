@@ -88,6 +88,7 @@ class User(AbstractUser):
     pickup_address = models.TextField(blank=True, null=True, help_text="Default pickup address for service bookings")
     pickup_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     pickup_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    machine_count = models.PositiveIntegerField(default=0, help_text="Number of machines available at this washer's location")
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="customer")
     staff_type = models.CharField(
         max_length=20,

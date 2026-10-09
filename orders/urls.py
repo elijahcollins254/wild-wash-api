@@ -10,10 +10,12 @@ from .views import (
     OrderPaymentStatusView,
     RequestDeliveryView,
     AssignOrderLocationView,
+    WasherAnalyticsView,
 )
 
 urlpatterns = [
     path('', OrderListCreateView.as_view(), name='order-list'),
+    path('washer-analytics/', WasherAnalyticsView.as_view(), name='washer-analytics'),
     path('assign-location/', AssignOrderLocationView.as_view(), name='order-assign-location'),
     path('update/', OrderUpdateView.as_view(), name='order-update'),
     path('rider/', RiderOrderListView.as_view(), name='rider-order-list'),

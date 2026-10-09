@@ -86,6 +86,8 @@ class UserSerializer(serializers.ModelSerializer):
             "pickup_address",
             "pickup_latitude",
             "pickup_longitude",
+            "machine_count",
+            "email",
             "is_staff",
             "service_location",
             "service_location_display",

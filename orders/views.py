@@ -8,6 +8,39 @@ from .models import Order
 from .serializers import OrderListSerializer, OrderCreateSerializer
 from users.permissions import LocationBasedPermission
 from users.models import Location
+
+
+class WasherAnalyticsView(APIView):
+    """Return order and payment totals for the authenticated washer."""
+    permission_classes = [permissions.IsAuthenticated]
+    COMMISSION_RATE = 0.10
+
+    def get(self, request):
+        user = request.user
+        if user.staff_type != 'washer' and user.role != 'washer':
+            return Response({'detail': 'Washer access required.'}, status=status.HTTP_403_FORBIDDEN)
+
+        orders = Order.objects.filter(washer=user).order_by('-created_at')
+        completed_statuses = ['washed', 'folded', 'ready', 'pending_delivery', 'assigned_delivery', 'delivered']
+        completed_count = orders.filter(status__in=completed_statuses).count()
+        in_progress_count = orders.filter(status='in_progress').count()
+
+        paid_revenue = 0.0
+        for order in orders.select_related('user').prefetch_related('services'):
+            paid_revenue += order.get_payment_summary()['paid_amount']
+
+        revenue = round(paid_revenue, 2)
+        return Response({
+            'completed_orders': completed_count,
+            'in_progress_orders': in_progress_count,
+            'revenue': revenue,
+            'commission_rate': self.COMMISSION_RATE,
+            'commission': round(revenue * self.COMMISSION_RATE, 2),
+            # Review records are not yet supported by the API.
+            'reviews': [],
+        })
+
+
 class StaffCreateOrderView(APIView):
     """
     POST -> Create a manual order for a customer (by staff)
