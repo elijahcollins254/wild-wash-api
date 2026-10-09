@@ -13,7 +13,10 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.authentication import TokenAuthentication
-from .models import RiderLocation, RiderProfile, RiderWallet, RiderWalletTransaction
+from .models import (
+    RiderLocation, RiderProfile, RiderWallet, RiderWalletTransaction,
+    WasherWallet, WasherWalletTransaction,
+)
 from .serializers import RiderLocationSerializer, RiderProfileSerializer
 
 logger = logging.getLogger(__name__)
@@ -45,9 +48,10 @@ def _format_ke_phone(value):
 
 
 def _wallet_payload(wallet):
+    owner = getattr(wallet, 'rider', None) or getattr(wallet, 'washer', None)
     return {
         'balance': str(wallet.balance),
-        'payout_phone': wallet.payout_phone or wallet.rider.phone or '',
+        'payout_phone': wallet.payout_phone or owner.phone or '',
         'transactions': [
             {
                 'id': item.id,
@@ -69,30 +73,40 @@ def _wallet_payload(wallet):
 class RiderWalletView(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [permissions.IsAuthenticated]
+    wallet_model = RiderWallet
+    transaction_model = RiderWalletTransaction
+    owner_field = 'rider'
+    required_role = 'rider'
+    owner_label = 'Rider'
+
+    def _is_owner(self, user):
+        return getattr(user, 'role', None) == self.required_role
+
+    def _get_wallet(self, user, **defaults):
+        return self.wallet_model.objects.get_or_create(
+            **{self.owner_field: user}, defaults=defaults
+        )[0]
 
     def get(self, request):
-        if not _is_rider(request.user):
-            return Response({'detail': 'Rider account required.'}, status=status.HTTP_403_FORBIDDEN)
-        wallet, _ = RiderWallet.objects.get_or_create(
-            rider=request.user,
-            defaults={'payout_phone': _format_ke_phone(request.user.phone) or ''},
-        )
+        if not self._is_owner(request.user):
+            return Response({'detail': f'{self.owner_label} account required.'}, status=status.HTTP_403_FORBIDDEN)
+        wallet = self._get_wallet(request.user, payout_phone=_format_ke_phone(request.user.phone) or '')
         return Response(_wallet_payload(wallet))
 
     def patch(self, request):
-        if not _is_rider(request.user):
-            return Response({'detail': 'Rider account required.'}, status=status.HTTP_403_FORBIDDEN)
+        if not self._is_owner(request.user):
+            return Response({'detail': f'{self.owner_label} account required.'}, status=status.HTTP_403_FORBIDDEN)
         phone = _format_ke_phone(request.data.get('payout_phone'))
         if not phone:
             return Response({'detail': 'Enter a valid Kenyan M-Pesa number.'}, status=status.HTTP_400_BAD_REQUEST)
-        wallet, _ = RiderWallet.objects.get_or_create(rider=request.user)
+        wallet = self._get_wallet(request.user)
         wallet.payout_phone = phone
         wallet.save(update_fields=['payout_phone', 'updated_at'])
         return Response(_wallet_payload(wallet))
 
     def post(self, request):
-        if not _is_rider(request.user):
-            return Response({'detail': 'Rider account required.'}, status=status.HTTP_403_FORBIDDEN)
+        if not self._is_owner(request.user):
+            return Response({'detail': f'{self.owner_label} account required.'}, status=status.HTTP_403_FORBIDDEN)
         try:
             amount = Decimal(str(request.data.get('amount', '')))
         except (InvalidOperation, ValueError, TypeError):
@@ -101,11 +115,11 @@ class RiderWalletView(APIView):
             return Response({'detail': 'Withdrawal amount must be a positive whole number of KES.'}, status=status.HTTP_400_BAD_REQUEST)
 
         with transaction.atomic():
-            wallet, _ = RiderWallet.objects.get_or_create(rider=request.user)
-            wallet = RiderWallet.objects.select_for_update().get(pk=wallet.pk)
+            wallet = self._get_wallet(request.user)
+            wallet = self.wallet_model.objects.select_for_update().get(pk=wallet.pk)
             existing_pending = wallet.transactions.filter(
-                transaction_type=RiderWalletTransaction.TYPE_WITHDRAWAL,
-                status=RiderWalletTransaction.STATUS_PENDING,
+                transaction_type=self.transaction_model.TYPE_WITHDRAWAL,
+                status=self.transaction_model.STATUS_PENDING,
             ).first()
             if existing_pending:
                 return Response(
@@ -135,14 +149,14 @@ class RiderWalletView(APIView):
 
             wallet.balance -= amount
             wallet.save(update_fields=['balance', 'updated_at'])
-            payout = RiderWalletTransaction.objects.create(
+            payout = self.transaction_model.objects.create(
                 wallet=wallet,
-                transaction_type=RiderWalletTransaction.TYPE_WITHDRAWAL,
-                status=RiderWalletTransaction.STATUS_PENDING,
+                transaction_type=self.transaction_model.TYPE_WITHDRAWAL,
+                status=self.transaction_model.STATUS_PENDING,
                 amount=amount,
                 balance_after=wallet.balance,
                 payout_phone=phone,
-                reason='Rider M-Pesa withdrawal',
+                reason=f'{self.owner_label} M-Pesa withdrawal',
             )
 
         try:
@@ -158,8 +172,8 @@ class RiderWalletView(APIView):
                 'reference': str(payout.reference),
             }, status=status.HTTP_202_ACCEPTED)
         except Exception as exc:
-            logger.exception('Unable to submit rider B2C payout %s', payout.reference)
-            _fail_rider_withdrawal(payout.pk, {'error': str(exc)}, 'Could not submit payout to M-Pesa')
+            logger.exception('Unable to submit %s B2C payout %s', self.owner_label.lower(), payout.reference)
+            _fail_wallet_withdrawal(self.transaction_model, payout.pk, {'error': str(exc)}, 'Could not submit payout to M-Pesa')
             return Response({'detail': 'M-Pesa payout could not be initiated. The amount was returned to your wallet.'}, status=status.HTTP_502_BAD_GATEWAY)
 
         payout.conversation_id = str(response_data.get('ConversationID') or '')
@@ -171,6 +185,83 @@ class RiderWalletView(APIView):
             'message': 'Withdrawal request submitted. The wallet balance is reserved until M-Pesa confirms the result.',
             'transaction': _wallet_payload(payout.wallet)['transactions'][0],
         }, status=status.HTTP_202_ACCEPTED)
+
+
+class WasherWalletView(RiderWalletView):
+    wallet_model = WasherWallet
+    transaction_model = WasherWalletTransaction
+    owner_field = 'washer'
+    required_role = 'washer'
+    owner_label = 'Washer'
+
+    def _is_owner(self, user):
+        return getattr(user, 'role', None) == 'washer' or getattr(user, 'staff_type', None) == 'washer'
+
+
+class AdminWasherWalletsView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [permissions.IsAdminUser]
+
+    def get(self, request):
+        from django.contrib.auth import get_user_model
+        from django.db.models import Q
+        User = get_user_model()
+        washers = User.objects.filter(Q(role='washer') | Q(staff_type='washer')).distinct().order_by('first_name', 'username')
+        if not request.user.is_superuser:
+            if not request.user.is_staff or not request.user.service_location_id:
+                return Response({'detail': 'You do not have permission to manage washer wallets.'}, status=status.HTTP_403_FORBIDDEN)
+            washers = washers.filter(service_location_id=request.user.service_location_id)
+        wallets = {wallet.washer_id: wallet for wallet in WasherWallet.objects.filter(washer__in=washers)}
+        return Response([
+            {
+                'washer_id': washer.id,
+                'username': washer.username,
+                'name': (f'{washer.first_name} {washer.last_name}'.strip() or washer.username),
+                'phone': washer.phone or '',
+                'balance': str(wallets[washer.id].balance) if washer.id in wallets else '0.00',
+            }
+            for washer in washers
+        ])
+
+
+class AdminWasherWalletCreditView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [permissions.IsAdminUser]
+
+    def post(self, request, washer_id):
+        from django.contrib.auth import get_user_model
+        from django.db.models import Q
+        User = get_user_model()
+        washer = User.objects.filter(pk=washer_id).filter(Q(role='washer') | Q(staff_type='washer')).first()
+        if washer is None:
+            return Response({'detail': 'Washer not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not _can_manage_rider_wallet(request.user, washer):
+            return Response({'detail': 'You do not have permission to credit this washer wallet.'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            amount = Decimal(str(request.data.get('amount', '')))
+        except (InvalidOperation, ValueError, TypeError):
+            return Response({'detail': 'Enter a valid credit amount.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not amount.is_finite() or amount <= 0 or amount > Decimal('9999999999.99') or amount != amount.quantize(Decimal('0.01')):
+            return Response({'detail': 'Credit amount must be positive and have at most two decimal places.'}, status=status.HTTP_400_BAD_REQUEST)
+        reason = str(request.data.get('reason', '')).strip()
+        if not reason:
+            return Response({'detail': 'A credit reason is required for the audit record.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            wallet, _ = WasherWallet.objects.get_or_create(washer=washer)
+            wallet = WasherWallet.objects.select_for_update().get(pk=wallet.pk)
+            wallet.balance += amount
+            wallet.save(update_fields=['balance', 'updated_at'])
+            entry = WasherWalletTransaction.objects.create(
+                wallet=wallet,
+                transaction_type=WasherWalletTransaction.TYPE_CREDIT,
+                status=WasherWalletTransaction.STATUS_COMPLETED,
+                amount=amount,
+                balance_after=wallet.balance,
+                reason=reason,
+                created_by=request.user,
+            )
+        return Response({'balance': str(wallet.balance), 'transaction_id': entry.id}, status=status.HTTP_201_CREATED)
 
 
 class AdminRiderWalletsView(APIView):
@@ -249,27 +340,32 @@ class MpesaB2CResultView(APIView):
             return Response({'detail': 'Malformed B2C result callback.'}, status=status.HTTP_400_BAD_REQUEST)
         originator_id = result.get('OriginatorConversationID')
         conversation_id = result.get('ConversationID')
-        payout = RiderWalletTransaction.objects.filter(
-            transaction_type=RiderWalletTransaction.TYPE_WITHDRAWAL,
-        ).filter(
-            originator_conversation_id=originator_id
-        ).first() if originator_id else None
-        if payout is None and conversation_id:
-            payout = RiderWalletTransaction.objects.filter(conversation_id=conversation_id).first()
+        payout_model = None
+        payout = None
+        for model in (RiderWalletTransaction, WasherWalletTransaction):
+            payout = model.objects.filter(
+                transaction_type=model.TYPE_WITHDRAWAL,
+                originator_conversation_id=originator_id,
+            ).first() if originator_id else None
+            if payout is None and conversation_id:
+                payout = model.objects.filter(conversation_id=conversation_id).first()
+            if payout is not None:
+                payout_model = model
+                break
         if payout is None:
             logger.warning('Unmatched Daraja B2C result callback (originator id=%s)', originator_id)
             return Response({'ResultCode': 0, 'ResultDesc': 'Accepted'})
 
         if str(result.get('ResultCode')) == '0':
             with transaction.atomic():
-                locked = RiderWalletTransaction.objects.select_for_update().get(pk=payout.pk)
-                if locked.status == RiderWalletTransaction.STATUS_PENDING:
-                    locked.status = RiderWalletTransaction.STATUS_COMPLETED
+                locked = payout_model.objects.select_for_update().get(pk=payout.pk)
+                if locked.status == payout_model.STATUS_PENDING:
+                    locked.status = payout_model.STATUS_COMPLETED
                     locked.provider_transaction_id = str(result.get('TransactionID') or '')
                     locked.provider_payload = request.data
                     locked.save(update_fields=['status', 'provider_transaction_id', 'provider_payload', 'updated_at'])
         else:
-            _fail_rider_withdrawal(payout.pk, request.data, str(result.get('ResultDesc') or 'M-Pesa payout failed'))
+            _fail_wallet_withdrawal(payout_model, payout.pk, request.data, str(result.get('ResultDesc') or 'M-Pesa payout failed'))
         return Response({'ResultCode': 0, 'ResultDesc': 'Accepted'})
 
 
@@ -283,7 +379,13 @@ class MpesaB2CTimeoutView(APIView):
         callback_data = request.data.get('Result', request.data)
         originator_id = callback_data.get('OriginatorConversationID') if isinstance(callback_data, dict) else None
         logger.warning('Daraja B2C timeout callback received (originator id=%s)', originator_id)
-        payout = RiderWalletTransaction.objects.filter(originator_conversation_id=originator_id).first() if originator_id else None
+        payout_model = None
+        payout = None
+        for model in (RiderWalletTransaction, WasherWalletTransaction):
+            payout = model.objects.filter(originator_conversation_id=originator_id).first() if originator_id else None
+            if payout is not None:
+                payout_model = model
+                break
         if payout:
             payout.provider_payload = {'timeout': callback_data}
             payout.save(update_fields=['provider_payload', 'updated_at'])
@@ -296,22 +398,23 @@ def _valid_b2c_callback(request):
     return bool(expected and supplied and secrets.compare_digest(expected, supplied))
 
 
-def _fail_rider_withdrawal(transaction_id, payload, reason):
+def _fail_wallet_withdrawal(transaction_model, transaction_id, payload, reason):
     with transaction.atomic():
-        payout = RiderWalletTransaction.objects.select_for_update().select_related('wallet').get(pk=transaction_id)
-        if payout.status != RiderWalletTransaction.STATUS_PENDING:
+        payout = transaction_model.objects.select_for_update().select_related('wallet').get(pk=transaction_id)
+        if payout.status != transaction_model.STATUS_PENDING:
             return
-        wallet = RiderWallet.objects.select_for_update().get(pk=payout.wallet_id)
+        wallet_model = WasherWallet if transaction_model is WasherWalletTransaction else RiderWallet
+        wallet = wallet_model.objects.select_for_update().get(pk=payout.wallet_id)
         wallet.balance += payout.amount
         wallet.save(update_fields=['balance', 'updated_at'])
-        payout.status = RiderWalletTransaction.STATUS_FAILED
+        payout.status = transaction_model.STATUS_FAILED
         payout.reason = reason
         payout.provider_payload = payload if isinstance(payload, dict) else {'detail': str(payload)}
         payout.save(update_fields=['status', 'reason', 'provider_payload', 'updated_at'])
-        RiderWalletTransaction.objects.create(
+        transaction_model.objects.create(
             wallet=wallet,
-            transaction_type=RiderWalletTransaction.TYPE_REVERSAL,
-            status=RiderWalletTransaction.STATUS_COMPLETED,
+            transaction_type=transaction_model.TYPE_REVERSAL,
+            status=transaction_model.STATUS_COMPLETED,
             amount=payout.amount,
             balance_after=wallet.balance,
             reason=f'Reversal for withdrawal {payout.reference}: {reason}',
@@ -350,7 +453,7 @@ def _submit_b2c_payout(payout, phone):
         'Amount': int(payout.amount),
         'PartyA': shortcode,
         'PartyB': phone,
-        'Remarks': f'Rider withdrawal {payout.reference}',
+        'Remarks': f'{("Washer" if isinstance(payout, WasherWalletTransaction) else "Rider")} withdrawal {payout.reference}',
         'QueueTimeOutURL': secure_callback_url(timeout_url),
         'ResultURL': secure_callback_url(result_url),
         'Occasion': str(payout.reference)[:20],
