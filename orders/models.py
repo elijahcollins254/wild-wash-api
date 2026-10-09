@@ -5,7 +5,8 @@ from django.conf import settings
 from services.models import Service
 from users.models import Location
 from decimal import Decimal
-import uuid
+import secrets
+import string
 
 class Order(models.Model):
     STATUS_CHOICES = [
@@ -48,7 +49,7 @@ class Order(models.Model):
         related_name="orders",
         help_text="The location where this order is being processed"
     )
-    code = models.CharField(max_length=32, unique=True, blank=True)  # e.g. "WW-12345"
+    code = models.CharField(max_length=32, unique=True, blank=True)  # e.g. "WW-A1B-2C3-D4E"
     pickup_address = models.TextField()
     pickup_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     pickup_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
@@ -338,7 +339,12 @@ class Order(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.code:
-            self.code = f"WW-{uuid.uuid4().hex[:29].upper()}"
+            alphabet = string.ascii_uppercase + string.digits
+            while not self.code:
+                token = ''.join(secrets.choice(alphabet) for _ in range(9))
+                candidate = f"WW-{token[:3]}-{token[3:6]}-{token[6:]}"
+                if not Order.objects.filter(code=candidate).exists():
+                    self.code = candidate
         # Set the first service as primary service for backward compatibility
         if not self.service and self.pk:
             first_service = self.services.first()

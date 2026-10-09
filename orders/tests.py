@@ -130,7 +130,7 @@ class OrderLaundryAssignmentTests(TestCase):
 
 
 class OrderCodeSecurityTest(TestCase):
-	def test_new_orders_receive_long_random_codes(self):
+	def test_new_orders_receive_short_grouped_alphanumeric_codes(self):
 		first_order = Order.objects.create(
 			pickup_address='Pickup',
 			dropoff_address='Dropoff',
@@ -140,8 +140,8 @@ class OrderCodeSecurityTest(TestCase):
 			dropoff_address='Dropoff',
 		)
 
-		self.assertRegex(first_order.code, r'^WW-[A-F0-9]{29}$')
-		self.assertRegex(second_order.code, r'^WW-[A-F0-9]{29}$')
+		self.assertRegex(first_order.code, r'^WW-[A-Z0-9]{3}-[A-Z0-9]{3}-[A-Z0-9]{3}$')
+		self.assertRegex(second_order.code, r'^WW-[A-Z0-9]{3}-[A-Z0-9]{3}-[A-Z0-9]{3}$')
 		self.assertNotEqual(first_order.code, second_order.code)
 		from .serializers import OrderCreateSerializer
 		self.assertEqual(OrderCreateSerializer(first_order).data['code'], first_order.code)
