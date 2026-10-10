@@ -425,8 +425,14 @@ class Order(models.Model):
         """Return the estimate/final price and payment balance for this order."""
         from payments.models import Payment
 
-        service_total = sum((service.price for service in self.services.all()), Decimal('0'))
-        estimate = service_total or self.price
+        service_total = self.order_items.aggregate(
+            total=models.Sum(models.F('service__price') * models.F('quantity')),
+        )['total']
+        if service_total is None:
+            service_total = sum((service.price for service in self.services.all()), Decimal('0'))
+        # `price` is the customer quote and includes the selected delivery-speed
+        # multiplier. Do not replace it with unweighted service catalog prices.
+        estimate = self.price if self.price is not None else service_total
         staff_price = self.get_latest_staff_price()
         total = Decimal(str(staff_price)) if staff_price is not None else estimate
         totals = Payment.objects.filter(order=self).aggregate(
