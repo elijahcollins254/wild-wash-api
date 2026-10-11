@@ -9,6 +9,20 @@ from decimal import Decimal
 User = get_user_model()
 
 
+def get_order_service_total(order):
+    """Calculate the catalog total using stored order-item quantities."""
+    order_items = order.order_items.select_related('service').all()
+    if order_items.exists():
+        return sum(
+            (item.service.price * item.quantity for item in order_items),
+            Decimal('0'),
+        )
+    return sum(
+        (service.price for service in order.services.all()),
+        Decimal('0'),
+    )
+
+
 class OrderListLightSerializer(serializers.ModelSerializer):
     """
     Lightweight serializer for order lists - only essential fields for performance
@@ -272,13 +286,19 @@ class OrderCreateSerializer(serializers.ModelSerializer):
                         service=service,
                         defaults={'quantity': 1}
                     )
+
+            # Keep the legacy order-level count consistent with service quantities.
+            item_count = sum(order.order_items.values_list('quantity', flat=True))
+            if item_count and order.items != item_count:
+                order.items = item_count
+                order.save(update_fields=['items'])
         
         return order
 
     def get_total_price(self, obj):
-        """Calculate total price from all services"""
-        total = sum(service.price for service in obj.services.all())
-        return float(total) if total else 0
+        """Return the quoted estimate, or a quantity-weighted catalog total."""
+        total = obj.price if obj.price is not None else get_order_service_total(obj)
+        return float(total) if total is not None else 0
 
 
 class OrderItemSerializer(serializers.ModelSerializer):
@@ -453,17 +473,17 @@ class OrderListSerializer(serializers.ModelSerializer):
         return out
 
     def get_total_price(self, obj):
-        """Calculate total price from all services"""
-        total = sum(service.price for service in obj.services.all())
-        return float(total) if total else None
+        """Return the stored quote or calculate a quantity-weighted estimate."""
+        total = obj.price if obj.price is not None else get_order_service_total(obj)
+        return float(total) if total is not None else None
 
     def get_package(self, obj):
         return getattr(obj.service, "name", f"Package {obj.package}") if obj.service else f"Package {obj.package}"
 
     def get_price_display(self, obj):
-        # Use total price from services if available
-        total = sum(service.price for service in obj.services.all())
-        if total:
+        # The stored price is the customer quote and includes delivery speed.
+        total = obj.price if obj.price is not None else get_order_service_total(obj)
+        if total is not None:
             try:
                 p = Decimal(str(total))
                 if p == p.to_integral():

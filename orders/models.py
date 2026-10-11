@@ -353,8 +353,17 @@ class Order(models.Model):
         super().save(*args, **kwargs)
 
     def get_total_price(self):
-        """Calculate total price from all services"""
-        return sum(service.price for service in self.services.all())
+        """Calculate the catalog total, including each service quantity."""
+        order_items = self.order_items.select_related('service').all()
+        if order_items.exists():
+            return sum(
+                (item.service.price * item.quantity for item in order_items),
+                Decimal('0'),
+            )
+        return sum(
+            (service.price for service in self.services.all()),
+            Decimal('0'),
+        )
 
     def get_latest_staff_price(self):
         """
