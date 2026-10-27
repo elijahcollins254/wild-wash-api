@@ -1,12 +1,24 @@
 # orders/serializers.py
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Order, OrderItem
+from .models import Order, OrderItem, OrderRating
 from services.models import Service
 from users.models import Location
 from decimal import Decimal
 
 User = get_user_model()
+
+
+class OrderRatingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrderRating
+        fields = ['rating', 'comment', 'created_at']
+        read_only_fields = ['created_at']
+
+    def validate_rating(self, value):
+        if not 1 <= value <= 5:
+            raise serializers.ValidationError('Rating must be between 1 and 5.')
+        return value
 
 
 def get_order_service_total(order):

@@ -516,3 +516,23 @@ class OrderEvent(models.Model):
 
     def __str__(self):
         return f"OrderEvent({self.order.code}): {self.event_type} @ {self.created_at}"
+
+
+class OrderRating(models.Model):
+    order = models.OneToOneField(
+        Order,
+        on_delete=models.CASCADE,
+        related_name='rating',
+    )
+    customer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='order_ratings',
+    )
+    rating = models.PositiveSmallIntegerField()
+    comment = models.TextField(blank=True, max_length=1000)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f'{self.order.code}: {self.rating}/5'

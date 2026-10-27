@@ -163,3 +163,67 @@ class OrderCodeSecurityTest(TestCase):
 
 		self.assertEqual(response.status_code, 200)
 		self.assertEqual(response.data['count'], 0)
+
+
+class OrderRatingTests(TestCase):
+	def setUp(self):
+		suffix = uuid4().hex
+		self.customer = User.objects.create_user(username=f'rating_customer_{suffix}', password='testpass123')
+		self.other_customer = User.objects.create_user(username=f'other_rating_customer_{suffix}', password='testpass123')
+		self.order = Order.objects.create(
+			user=self.customer,
+			code=f'WW-RATE-{suffix[:16]}',
+			status='delivered',
+			pickup_address='Pickup',
+			dropoff_address='Dropoff',
+		)
+		self.client = APIClient()
+		self.client.force_authenticate(user=self.customer)
+		self.url = f'/orders/{self.order.code}/rating/'
+
+	def test_customer_can_rate_their_delivered_order(self):
+		response = self.client.post(self.url, {'rating': 5, 'comment': 'Great service'}, format='json')
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(response.data['rating'], 5)
+		self.assertEqual(response.data['comment'], 'Great service')
+		self.assertEqual(self.order.rating.customer, self.customer)
+
+	def test_customer_can_update_their_rating(self):
+		self.client.post(self.url, {'rating': 4}, format='json')
+
+		response = self.client.post(self.url, {'rating': 3, 'comment': 'Updated'}, format='json')
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(self.order.rating.rating, 3)
+		self.assertEqual(self.order.rating.comment, 'Updated')
+		self.assertEqual(self.order.rating.customer, self.customer)
+
+	def test_customer_can_retrieve_their_existing_rating(self):
+		self.client.post(self.url, {'rating': 5, 'comment': 'Great'}, format='json')
+
+		response = self.client.get(self.url)
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(response.data['rating'], 5)
+		self.assertEqual(response.data['comment'], 'Great')
+
+	def test_customer_cannot_rate_another_customers_order(self):
+		self.client.force_authenticate(user=self.other_customer)
+
+		response = self.client.post(self.url, {'rating': 5}, format='json')
+
+		self.assertEqual(response.status_code, 403)
+
+	def test_order_must_be_delivered_before_it_can_be_rated(self):
+		self.order.status = 'ready'
+		self.order.save(update_fields=['status'])
+
+		response = self.client.post(self.url, {'rating': 5}, format='json')
+
+		self.assertEqual(response.status_code, 400)
+
+	def test_rating_must_be_between_one_and_five(self):
+		response = self.client.post(self.url, {'rating': 6}, format='json')
+
+		self.assertEqual(response.status_code, 400)

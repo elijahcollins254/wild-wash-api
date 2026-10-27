@@ -8,6 +8,7 @@ from .views import (
     RequestedOrdersListView,
     StaffCreateOrderView,
     OrderPaymentStatusView,
+    OrderRatingView,
     RequestDeliveryView,
     AssignOrderLocationView,
     WasherAnalyticsView,
@@ -22,5 +23,6 @@ urlpatterns = [
     path('requested/', RequestedOrdersListView.as_view(), name='requested-orders-list'),
     path('create/', StaffCreateOrderView.as_view(), name='staff-create-order'),
     path('<str:code>/payment-status/', OrderPaymentStatusView.as_view(), name='order-payment-status'),
+    path('<str:code>/rating/', OrderRatingView.as_view(), name='order-rating'),
     path('<str:code>/request-delivery/', RequestDeliveryView.as_view(), name='request-delivery'),
 ]

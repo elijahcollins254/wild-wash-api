@@ -4,8 +4,8 @@ from django.db.models import Prefetch
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from .models import Order
-from .serializers import OrderListSerializer, OrderCreateSerializer
+from .models import Order, OrderRating
+from .serializers import OrderListSerializer, OrderCreateSerializer, OrderRatingSerializer
 from users.permissions import LocationBasedPermission
 from users.models import Location
 
@@ -1510,6 +1510,55 @@ class OrderPaymentStatusView(APIView):
                 {'detail': 'Order not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
+
+
+class OrderRatingView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_order(self, request, code):
+        try:
+            order = Order.objects.get(code__iexact=code)
+        except Order.DoesNotExist:
+            return None, Response({'detail': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if order.user_id != request.user.id:
+            return None, Response(
+                {'detail': 'You do not have permission to rate this order'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if order.status != 'delivered':
+            return None, Response(
+                {'detail': 'You can rate an order after it has been delivered'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return order, None
+
+    def get(self, request, code, *args, **kwargs):
+        order, error_response = self.get_order(request, code)
+        if error_response:
+            return error_response
+        try:
+            rating = order.rating
+        except OrderRating.DoesNotExist:
+            rating = None
+        return Response(OrderRatingSerializer(rating).data if rating else None)
+
+    def post(self, request, code, *args, **kwargs):
+        order, error_response = self.get_order(request, code)
+        if error_response:
+            return error_response
+
+        serializer = OrderRatingSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        rating, _created = OrderRating.objects.update_or_create(
+            order=order,
+            defaults={
+                'customer': request.user,
+                'rating': serializer.validated_data['rating'],
+                'comment': serializer.validated_data.get('comment', ''),
+            },
+        )
+        return Response(OrderRatingSerializer(rating).data, status=status.HTTP_200_OK)
 
 
 class RequestDeliveryView(APIView):
