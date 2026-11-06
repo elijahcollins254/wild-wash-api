@@ -33,7 +33,7 @@ DEBUG = True
 # Check if we're in Vercel build mode
 VERCEL_BUILD = os.getenv('VERCEL_BUILD') == '1'
 
-ALLOWED_HOSTS = ['https://www.wildwash.co.ke','api.wildwash.co.ke', '127.0.0.1', 'localhost', '.vercel.app', 'wildwash.kibeezy.com', 'wildwash.co.ke', 'rain.wildwash.co.ke', '8000-firebase-wild-wash-apigit-1760697854679.cluster-lu4mup47g5gm4rtyvhzpwbfadi.cloudworkstations.dev', '3000-firebase-wildwashgit-1760698481871.cluster-ikslh4rdsnbqsvu5nw3v4dqjj2.cloudworkstations.dev']
+ALLOWED_HOSTS = ['https://www.wildwash.co.ke','api.wildwash.co.ke', 'wildwash-backend-env.eba-h8s6kh2m.eu-north-1.elasticbeanstalk.com', '127.0.0.1', 'localhost', '.vercel.app', 'wildwash.kibeezy.com', 'wildwash.co.ke', 'rain.wildwash.co.ke', '8000-firebase-wild-wash-apigit-1760697854679.cluster-lu4mup47g5gm4rtyvhzpwbfadi.cloudworkstations.dev', '3000-firebase-wildwashgit-1760698481871.cluster-ikslh4rdsnbqsvu5nw3v4dqjj2.cloudworkstations.dev']
 
 
 # Application definition
@@ -270,5 +270,4 @@ AFRICAS_TALKING_API_KEY = os.getenv('AFRICAS_TALKING_API_KEY', '')
 AFRICAS_TALKING_USERNAME = os.getenv('AFRICAS_TALKING_USERNAME', 'sandbox')
 AFRICAS_TALKING_SENDER_ID = os.getenv('AFRICAS_TALKING_SENDER_ID', 'WILDWASH')
 ADMIN_PHONE_NUMBER = os.getenv('ADMIN_PHONE_NUMBER', '+254712345678')  # Default admin phone, update in .env
-
 
