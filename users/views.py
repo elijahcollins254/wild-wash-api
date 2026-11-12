@@ -7,7 +7,11 @@ from rest_framework.authtoken.models import Token
 from rest_framework.authentication import TokenAuthentication
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
+from django.conf import settings
 from django.http import JsonResponse
+from google.auth import exceptions as google_auth_exceptions
+from google.auth.transport.requests import Request as GoogleAuthRequest
+from google.oauth2 import id_token as google_id_token
 
 from .serializers import (
     UserSerializer, UserCreateSerializer, ChangePasswordSerializer,
@@ -753,6 +757,112 @@ class GoogleAuthView(APIView):
             request=request
         )
         
+        return Response({
+            'user': {
+                'id': user.id,
+                'email': user.email,
+                'username': user.username,
+                'first_name': user.first_name,
+                'last_name': user.last_name,
+                'phone': getattr(user, 'phone', ''),
+                'role': user.role,
+                'staff_type': user.staff_type,
+                'is_staff': user.is_staff,
+                'is_superuser': user.is_superuser,
+                'profile_complete': user.profile_complete,
+            },
+            'token': token.key,
+        })
+
+
+class MobileGoogleAuthView(APIView):
+    """Verify a Google ID token and issue an API token for the Expo app."""
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        id_token = request.data.get('id_token')
+        if not isinstance(id_token, str) or not id_token:
+            return Response(
+                {'detail': 'Google ID token is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        allowed_client_ids = getattr(settings, 'GOOGLE_OAUTH_CLIENT_IDS', ())
+        if not allowed_client_ids:
+            return Response(
+                {'detail': 'Google sign-in is not configured on the server.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        try:
+            claims = google_id_token.verify_oauth2_token(
+                id_token,
+                GoogleAuthRequest(),
+                audience=list(allowed_client_ids),
+            )
+        except ValueError:
+            return Response(
+                {'detail': 'Google ID token is invalid or expired.'},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        except google_auth_exceptions.TransportError:
+            return Response(
+                {'detail': 'Google token verification is temporarily unavailable.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        audience = claims.get('aud')
+        authorized_party = claims.get('azp')
+        email_claim = claims.get('email')
+        subject = claims.get('sub')
+        if (
+            audience not in allowed_client_ids
+            or (authorized_party and authorized_party not in allowed_client_ids)
+            or claims.get('email_verified') not in (True, 'true')
+            or not isinstance(email_claim, str)
+            or not email_claim.strip()
+            or not isinstance(subject, str)
+            or not subject
+        ):
+            return Response(
+                {'detail': 'Google ID token is not valid for this app.'},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        email = email_claim.strip().lower()
+        name = claims.get('name')
+        if not isinstance(name, str) or not name.strip():
+            name = email.split('@', 1)[0]
+
+        user = User.objects.filter(email__iexact=email).first()
+        user_created = user is None
+        if user is None:
+            username_base = email.split('@', 1)[0][:140] or 'google-user'
+            username = username_base
+            suffix = 1
+            while User.objects.filter(username=username).exists():
+                suffix_text = str(suffix)
+                username = f'{username_base[:150 - len(suffix_text)]}{suffix_text}'
+                suffix += 1
+
+            name_parts = name.split()
+            user = User.objects.create(
+                email=email,
+                username=username,
+                first_name=name_parts[0] if name_parts else '',
+                last_name=' '.join(name_parts[1:]),
+                role='customer',
+                staff_type='general',
+            )
+
+        token, _ = Token.objects.get_or_create(user=user)
+        log_activity(
+            user=user,
+            action='google_oauth_signup' if user_created else 'google_oauth_login',
+            description='User signed up via Google OAuth' if user_created else 'User logged in via Google OAuth',
+            request=request,
+        )
+
         return Response({
             'user': {
                 'id': user.id,

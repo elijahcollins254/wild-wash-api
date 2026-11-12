@@ -1,9 +1,11 @@
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from typing import Any, cast
+from unittest.mock import patch
 from rest_framework.test import APIClient, APITestCase
 from rest_framework import status
 from rest_framework.reverse import reverse
+from django.test import override_settings
 
 from .models import DataDeletionRequest
 
@@ -56,3 +58,48 @@ class DataDeletionRequestApiTests(APITestCase):
 
 		self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 		self.assertTrue(User.objects.filter(pk=target_user.pk).exists())
+
+
+class MobileGoogleAuthApiTests(APITestCase):
+	def setUp(self):
+		self.api_client = APIClient()
+		self.url = reverse('google-auth-mobile')
+
+	@override_settings(GOOGLE_OAUTH_CLIENT_IDS=('wildwash-mobile-client',))
+	@patch('users.views.google_id_token.verify_oauth2_token')
+	def test_valid_google_token_creates_user_and_returns_api_token(self, mock_verify):
+		mock_verify.return_value = {
+			'aud': 'wildwash-mobile-client',
+			'email_verified': 'true',
+			'email': 'newuser@example.com',
+			'name': 'New User',
+			'sub': 'google-subject',
+		}
+
+		response = cast(Any, self.api_client.post(self.url, {'id_token': 'signed-id-token'}, format='json'))
+
+		self.assertEqual(response.status_code, status.HTTP_200_OK)
+		self.assertEqual(response.data['user']['email'], 'newuser@example.com')
+		self.assertTrue(response.data['token'])
+		self.assertTrue(User.objects.filter(email='newuser@example.com').exists())
+		mock_verify.assert_called_once()
+
+	@override_settings(GOOGLE_OAUTH_CLIENT_IDS=('wildwash-mobile-client',))
+	@patch('users.views.google_id_token.verify_oauth2_token')
+	def test_token_for_another_client_is_rejected(self, mock_verify):
+		mock_verify.return_value = {
+			'aud': 'another-client',
+			'email_verified': 'true',
+			'email': 'attacker@example.com',
+			'sub': 'google-subject',
+		}
+
+		response = cast(Any, self.api_client.post(self.url, {'id_token': 'signed-id-token'}, format='json'))
+
+		self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+		self.assertFalse(User.objects.filter(email='attacker@example.com').exists())
+
+	def test_missing_id_token_is_rejected(self):
+		response = cast(Any, self.api_client.post(self.url, {}, format='json'))
+
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

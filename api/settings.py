@@ -9,6 +9,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+GOOGLE_OAUTH_CLIENT_IDS = tuple(
+    client_id.strip()
+    for client_id in os.getenv('GOOGLE_OAUTH_CLIENT_IDS', '').split(',')
+    if client_id.strip()
+)
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 

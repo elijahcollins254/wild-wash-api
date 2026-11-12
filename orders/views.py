@@ -1,6 +1,7 @@
 # orders/views.py
 from django.db import models
 from django.db.models import Prefetch
+from django.db import transaction
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -8,6 +9,9 @@ from .models import Order, OrderRating
 from .serializers import OrderListSerializer, OrderCreateSerializer, OrderRatingSerializer
 from users.permissions import LocationBasedPermission
 from users.models import Location
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class WasherAnalyticsView(APIView):
@@ -235,6 +239,128 @@ class RequestedOrdersListView(generics.ListAPIView):
             rider__isnull=True
         ).select_related('user', 'service', 'service_location').prefetch_related('services').order_by('-created_at')
 
+
+class AssignOrderWasherView(APIView):
+    """Assign an in-progress order to a washer and notify them."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        user = request.user
+        if not (
+            user.is_superuser
+            or user.role == 'admin'
+            or (
+                user.is_location_admin
+                and user.service_location_id
+            )
+        ):
+            return Response(
+                {'error': 'Only administrators can assign washers'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        try:
+            order_id = int(request.data.get('order_id'))
+            washer_id = int(request.data.get('washer_id'))
+        except (TypeError, ValueError):
+            return Response(
+                {'error': 'Valid order_id and washer_id are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            from users.models import User
+            washer = User.objects.get(
+                id=washer_id,
+                is_active=True
+            )
+        except User.DoesNotExist:
+            return Response({'error': 'Active washer not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if washer.role != 'washer' and washer.staff_type != 'washer':
+            return Response({'error': 'Selected user is not a washer'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            with transaction.atomic():
+                order = Order.objects.select_for_update().select_related('washer').get(id=order_id)
+
+                is_global_admin = user.is_superuser or user.role == 'admin'
+                if not is_global_admin and user.service_location_id != order.service_location_id:
+                    return Response(
+                        {'error': 'You can only assign washers to orders at your location'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+
+                if not order.service_location_id or washer.service_location_id != order.service_location_id:
+                    return Response(
+                        {'error': 'Washer must be assigned to the order location'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                if order.status != 'in_progress':
+                    return Response(
+                        {'error': 'Only in-progress orders can be assigned to a washer'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                if order.washer_id == washer.id:
+                    return Response({
+                        'message': 'Washer is already assigned to this order',
+                        'washer': self._washer_data(washer),
+                    })
+
+                order.washer = washer
+                order.save(update_fields=['washer'])
+
+                from notifications.models import Notification
+                message = f'Order {order.code} has been assigned to you for washing.'
+                Notification.objects.create(
+                    user=washer,
+                    order=order,
+                    message=message,
+                    notification_type='order_assigned'
+                )
+        except Order.DoesNotExist:
+            return Response({'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        sms_sent = False
+        sms_message = 'Washer has no phone number; SMS was not sent.'
+        if washer.phone and washer.phone.strip():
+            try:
+                from services.sms_service import AfricasTalkingSMSService
+                sms_result = AfricasTalkingSMSService().send_sms(
+                    phone_number=washer.phone,
+                    message=f'WildWash: Order {order.code} has been assigned to you for washing. View your dashboard at https://www.wildwash.co.ke/staff/washer',
+                )
+                sms_sent = sms_result.get('status') == 'success'
+                if sms_sent:
+                    sms_message = 'Assignment SMS sent.'
+                else:
+                    sms_message = 'Washer assigned, but SMS could not be sent.'
+                    logger.error('SMS sending failed for washer %s, order %s: %s', washer.id, order.code, sms_result)
+            except Exception:
+                sms_message = 'Washer assigned, but SMS could not be sent.'
+                logger.exception('SMS sending failed for washer %s, order %s', washer.id, order.code)
+        else:
+            logger.warning('Washer %s has no phone number; assignment SMS was not sent', washer.id)
+
+        return Response({
+            'message': 'Washer assigned successfully',
+            'sms_sent': sms_sent,
+            'sms_message': sms_message,
+            'washer': self._washer_data(washer),
+        })
+
+    @staticmethod
+    def _washer_data(washer):
+        return {
+            'id': washer.id,
+            'username': washer.username,
+            'first_name': washer.first_name,
+            'last_name': washer.last_name,
+        }
+
+
 class RiderOrderListView(generics.ListAPIView):
     """
     GET -> List orders assigned to the authenticated rider
@@ -253,17 +379,17 @@ class RiderOrderListView(generics.ListAPIView):
         user = self.request.user
         excluded_services = ['Cleaning', 'fumigation', 'cctv installation', 'shower installation']
         
-        # For washers: show in_progress orders
-        if hasattr(user, 'staff_type') and user.staff_type == 'washer':
+        # Washers only see active work assigned specifically to their account.
+        if user.staff_type == 'washer' or user.role == 'washer':
             queryset = Order.objects.filter(
                 service_location=user.service_location,
                 status='in_progress',
-                washer__isnull=True  # Not yet assigned to a washer
+                washer=user
             ).exclude(
                 services__name__in=excluded_services
-            ).distinct().select_related('user', 'service', 'rider', 'service_location').prefetch_related('services').order_by('-created_at')
+            ).distinct().select_related('user', 'service', 'rider', 'washer', 'service_location').prefetch_related('services').order_by('-created_at')
             
-            print(f"\n[DEBUG WasherOrders] Washer {user.username} (ID: {user.id}) querying in_progress orders")
+            print(f"\n[DEBUG WasherOrders] Washer {user.username} (ID: {user.id}) querying assigned in_progress orders")
             print(f"[DEBUG] Total in_progress orders: {queryset.count()}")
         
         # For folders: show washed orders
@@ -372,6 +498,13 @@ class OrderUpdateView(APIView):
                 return Response({'error': 'Order ID is required'}, status=status.HTTP_400_BAD_REQUEST)
 
             order = Order.objects.get(id=order_id)
+
+            is_washer = request.user.role == 'washer' or request.user.staff_type == 'washer'
+            if is_washer and order.washer_id != request.user.id:
+                return Response(
+                    {'error': 'You can only update orders assigned to you'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
             
             # Check if the staff member has permission for this location
             # Allow: superusers, or staff with matching service_location, or any staff with washer/folder role
@@ -1083,7 +1216,7 @@ class OrderListCreateView(generics.ListCreateAPIView):
             'description', 'washer_notes', 'folder_notes', 'fumigator_notes'
         ).select_related(
             'user', 'service', 'rider', 'service_location', 
-            'pickup_rider', 'delivery_rider', 'created_by'
+            'pickup_rider', 'delivery_rider', 'created_by', 'washer'
         )
 
         # Role-specific staff accounts may not have Django's is_staff flag set.
@@ -1104,6 +1237,8 @@ class OrderListCreateView(generics.ListCreateAPIView):
             else:
                 print(f"[DEBUG Orders] ⚠️ Staff has no service_location assigned, returning no orders")
                 return Order.objects.none()
+        if user.is_authenticated and (user.role == 'washer' or user.staff_type == 'washer'):
+            queryset = queryset.filter(washer=user)
         # For regular users, show only their orders
         elif user.is_authenticated and not is_location_staff:
             queryset = queryset.filter(user=user)

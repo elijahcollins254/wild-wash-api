@@ -7,6 +7,7 @@ python-dotenv
 psycopg2-binary
 pillow
 requests
+google-auth
 django-filter
 whitenoise
 gunicorn

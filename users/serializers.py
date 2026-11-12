@@ -89,6 +89,7 @@ class UserSerializer(serializers.ModelSerializer):
             "machine_count",
             "email",
             "is_staff",
+            "is_active",
             "service_location",
             "service_location_display",
             "date_joined",

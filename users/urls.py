@@ -9,7 +9,7 @@ from .views import (
     get_csrf, RegisterView, UserProfileView, ProfileSetupView,
     LocationViewSet, StaffViewSet, StaffLoginView, AdminLoginView,
     RequestPasswordResetView, VerifyPasswordResetCodeView, ConfirmPasswordResetView,
-    ActivityLogViewSet, DataDeletionRequestView, GoogleAuthView
+    ActivityLogViewSet, DataDeletionRequestView, GoogleAuthView, MobileGoogleAuthView
 )
 
 router = DefaultRouter()
@@ -25,6 +25,7 @@ urlpatterns = [
     path('deletion-requests/', DataDeletionRequestView.as_view(), name='deletion-request-create'),
     path('login/', LoginView.as_view(), name='login'),
     path('google-auth/', GoogleAuthView.as_view(), name='google-auth'),
+    path('google-auth/mobile/', MobileGoogleAuthView.as_view(), name='google-auth-mobile'),
     path('staff/login/', StaffLoginView.as_view(), name='staff-login'),
     path('admin/login/', AdminLoginView.as_view(), name='admin-login'),
     path('change-password/', ChangePasswordView.as_view(), name='change-password'),
@@ -34,5 +35,4 @@ urlpatterns = [
     path('password-reset/confirm/', ConfirmPasswordResetView.as_view(), name='password-reset-confirm'),
     path('users/<int:user_id>/activity-logs/', ActivityLogViewSet.as_view({'get': 'list'}), name='user-activity-logs'),
 ]
-
 

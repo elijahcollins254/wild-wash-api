@@ -3,9 +3,11 @@ from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
+from unittest.mock import patch
 
 from .models import Order
 from users.models import Location
+from notifications.models import Notification
 
 User = get_user_model()
 
@@ -48,6 +50,28 @@ class StaffOrderListTest(TestCase):
 			service_location=location,
 			pickup_address='Local pickup',
 			dropoff_address='Local dropoff',
+			washer=washer,
+		)
+		unassigned_order = Order.objects.create(
+			code=f'WW-UNASSIGNED-{suffix[:18]}',
+			user=customer,
+			service_location=location,
+			pickup_address='Unassigned pickup',
+			dropoff_address='Unassigned dropoff',
+		)
+		other_washer = User.objects.create_user(
+			username=f'other_role_washer_{suffix}',
+			password='testpass123',
+			role='washer',
+			service_location=location,
+		)
+		other_assigned_order = Order.objects.create(
+			code=f'WW-OTHER-WASHER-{suffix[:15]}',
+			user=customer,
+			service_location=location,
+			pickup_address='Other washer pickup',
+			dropoff_address='Other washer dropoff',
+			washer=other_washer,
 		)
 		Order.objects.create(
 			code=f'WW-OTHER-{suffix[:20]}',
@@ -64,6 +88,8 @@ class StaffOrderListTest(TestCase):
 		self.assertEqual(response.status_code, 200)
 		self.assertEqual(response.data['count'], 1)
 		self.assertEqual(response.data['results'][0]['id'], local_order.id)
+		self.assertNotEqual(response.data['results'][0]['id'], unassigned_order.id)
+		self.assertNotEqual(response.data['results'][0]['id'], other_assigned_order.id)
 
 
 class OrderLaundryAssignmentTests(TestCase):
@@ -127,6 +153,93 @@ class OrderLaundryAssignmentTests(TestCase):
 		self.assertEqual(response.status_code, 404)
 		self.order.refresh_from_db()
 		self.assertIsNone(self.order.service_location)
+
+
+class WasherOrderAssignmentTests(TestCase):
+	def setUp(self):
+		suffix = uuid4().hex
+		self.location = Location.objects.create(name=f'Washer assignment {suffix}')
+		self.admin = User.objects.create_user(
+			username=f'washer_admin_{suffix}',
+			password='testpass123',
+			role='admin',
+			is_staff=True,
+		)
+		self.washer = User.objects.create_user(
+			username=f'washer_{suffix}',
+			password='testpass123',
+			role='washer',
+			staff_type='washer',
+			service_location=self.location,
+			phone='0712345678',
+		)
+		self.order = Order.objects.create(
+			code=f'WW-WASHER-{suffix[:18]}',
+			status='in_progress',
+			service_location=self.location,
+			pickup_address='Pickup',
+			dropoff_address='Dropoff',
+		)
+		self.client = APIClient()
+
+	@patch('services.sms_service.AfricasTalkingSMSService')
+	def test_admin_assigns_washer_creates_notification_and_sends_sms(self, sms_service_class):
+		sms_service_class.return_value.send_sms.return_value = {'status': 'success'}
+		self.client.force_authenticate(user=self.admin)
+
+		response = self.client.post('/orders/assign-washer/', {
+			'order_id': self.order.id,
+			'washer_id': self.washer.id,
+		}, format='json')
+
+		self.assertEqual(response.status_code, 200)
+		self.assertTrue(response.data['sms_sent'])
+		self.order.refresh_from_db()
+		self.assertEqual(self.order.washer, self.washer)
+		self.assertTrue(Notification.objects.filter(
+			user=self.washer,
+			order=self.order,
+			notification_type='order_assigned',
+		).exists())
+		sms_service_class.return_value.send_sms.assert_called_once()
+		sms_args = sms_service_class.return_value.send_sms.call_args.kwargs
+		self.assertEqual(sms_args['phone_number'], self.washer.phone)
+		self.assertIn(self.order.code, sms_args['message'])
+
+	def test_non_admin_cannot_assign_washer(self):
+		customer = User.objects.create_user(username=f'customer_{uuid4().hex}', password='testpass123')
+		self.client.force_authenticate(user=customer)
+
+		response = self.client.post('/orders/assign-washer/', {
+			'order_id': self.order.id,
+			'washer_id': self.washer.id,
+		}, format='json')
+
+		self.assertEqual(response.status_code, 403)
+		self.order.refresh_from_db()
+		self.assertIsNone(self.order.washer)
+
+	def test_washer_cannot_update_an_order_assigned_to_another_washer(self):
+		other_washer = User.objects.create_user(
+			username=f'other_washer_{uuid4().hex}',
+			password='testpass123',
+			role='washer',
+			staff_type='washer',
+			service_location=self.location,
+		)
+		self.order.washer = other_washer
+		self.order.save(update_fields=['washer'])
+		self.client.force_authenticate(user=self.washer)
+
+		response = self.client.patch(
+			f'/orders/update/?id={self.order.id}',
+			{'status': 'washed'},
+			format='json',
+		)
+
+		self.assertEqual(response.status_code, 403)
+		self.order.refresh_from_db()
+		self.assertEqual(self.order.status, 'in_progress')
 
 
 class OrderCodeSecurityTest(TestCase):
