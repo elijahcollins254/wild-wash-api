@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django.utils.text import slugify
+from .image_urls import get_service_image_url
 from .models import ServiceCategory, Service
 
 
@@ -37,7 +38,10 @@ class ServiceAdmin(admin.ModelAdmin):
             'fields': ('name', 'category', 'price')
         }),
         ("Details", {
-            'fields': ('description', 'image_link', 'image')
+            'fields': ('description', 'image_link', 'image'),
+            'description': (
+                'Use the public AWS image URL so the service image is returned to the mobile app.'
+            ),
         }),
         ("Status", {
             'fields': ('is_active',)
@@ -47,3 +51,8 @@ class ServiceAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+
+    def save_model(self, request, obj, form, change):
+        if not obj.image_link:
+            obj.image_link = get_service_image_url(obj.name) or ""
+        super().save_model(request, obj, form, change)
