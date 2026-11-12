@@ -48,6 +48,7 @@ class OrderListLightSerializer(serializers.ModelSerializer):
     washer = serializers.SerializerMethodField()
     user = serializers.SerializerMethodField()
     service_location = serializers.SerializerMethodField()
+    pickup_location = serializers.SerializerMethodField()
     
     def get_user_name(self, obj):
         if not obj.user:
@@ -90,13 +91,21 @@ class OrderListLightSerializer(serializers.ModelSerializer):
             "name": obj.service_location.name,
             "region": obj.service_location.region,
         }
+
+    def get_pickup_location(self, obj):
+        if obj.pickup_latitude is None or obj.pickup_longitude is None:
+            return None
+        return {
+            "lat": float(obj.pickup_latitude),
+            "lng": float(obj.pickup_longitude),
+        }
     
     class Meta:
         model = Order
         fields = [
             "id", "code", "status", "created_at", "customer_name", "service_name",
             "user_name", "user", "rider_name", "service_location", "price",
-            "actual_price", "is_paid", "order_type", "washer"
+            "actual_price", "is_paid", "order_type", "washer", "pickup_location"
         ]
 
 
@@ -534,11 +543,11 @@ class OrderListSerializer(serializers.ModelSerializer):
         return None
 
     def get_pickup_location(self, obj):
-        """Return pickup location coordinates if available from service_location"""
-        if obj.service_location and hasattr(obj.service_location, 'latitude') and hasattr(obj.service_location, 'longitude'):
+        """Return the order's saved pickup coordinates, if present."""
+        if obj.pickup_latitude is not None and obj.pickup_longitude is not None:
             return {
-                'lat': float(obj.service_location.latitude) if obj.service_location.latitude else None,
-                'lng': float(obj.service_location.longitude) if obj.service_location.longitude else None
+                'lat': float(obj.pickup_latitude),
+                'lng': float(obj.pickup_longitude),
             }
         return None
 
