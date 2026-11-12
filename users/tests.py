@@ -103,3 +103,16 @@ class MobileGoogleAuthApiTests(APITestCase):
 		response = cast(Any, self.api_client.post(self.url, {}, format='json'))
 
 		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class RegistrationPhoneValidationTests(APITestCase):
+	def test_registration_accepts_kenyan_01_number_and_normalizes_it(self):
+		response = self.client.post('/users/register/', {
+			'username': 'kenya_phone_user',
+			'phone': '0116629591',
+			'password': 'StrongPass123',
+		}, format='json')
+
+		self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+		self.assertEqual(response.data['phone'], '+254116629591')
+		self.assertEqual(User.objects.get(username='kenya_phone_user').phone, '+254116629591')

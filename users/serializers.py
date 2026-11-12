@@ -1,7 +1,9 @@
 # users/serializers.py
+import re
+
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
-from .models import DataDeletionRequest, Location, ActivityLog
+from .models import DataDeletionRequest, Location, ActivityLog, format_phone_number
 
 User = get_user_model()
 
@@ -123,6 +125,12 @@ class UserCreateSerializer(serializers.ModelSerializer):
                 f"A user with the username '{value}' already exists. Please choose a different username."
             )
         return value
+
+    def validate_phone(self, value):
+        digits = re.sub(r"\D", "", value)
+        if not re.fullmatch(r"(?:0[17]\d{8}|254[17]\d{8})", digits):
+            raise serializers.ValidationError("Please enter a valid Kenya phone number.")
+        return format_phone_number(value)
 
     def create(self, validated_data):
         password = validated_data.pop("password")
