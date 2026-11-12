@@ -90,7 +90,7 @@ class UserProfileView(APIView):
         
         # Check if all required fields have values (not empty strings or None)
         all_fields_filled = all(
-            getattr(user, field, '').strip() 
+            (getattr(user, field, None) or '').strip()
             for field in required_fields
         )
         

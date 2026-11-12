@@ -116,3 +116,16 @@ class RegistrationPhoneValidationTests(APITestCase):
 		self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 		self.assertEqual(response.data['phone'], '+254116629591')
 		self.assertEqual(User.objects.get(username='kenya_phone_user').phone, '+254116629591')
+
+
+class UserProfilePatchTests(APITestCase):
+	def test_partial_update_handles_null_profile_fields(self):
+		user = User.objects.create_user(username='profile_patch_user', password='StrongPass123')
+		self.client.force_authenticate(user=user)
+
+		response = self.client.patch('/users/me/', {'first_name': 'Alex'}, format='json')
+
+		self.assertEqual(response.status_code, status.HTTP_200_OK)
+		user.refresh_from_db()
+		self.assertEqual(user.first_name, 'Alex')
+		self.assertFalse(user.profile_complete)
