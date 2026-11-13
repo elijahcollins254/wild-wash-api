@@ -35,6 +35,7 @@ class SupportMessage(models.Model):
     is_from_support = models.BooleanField(default=False)
     body = models.CharField(max_length=4000)
     created_at = models.DateTimeField(auto_now_add=True)
+    customer_read_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ('created_at', 'id')

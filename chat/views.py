@@ -1,3 +1,4 @@
+from django.utils import timezone
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -13,6 +14,10 @@ class SupportChatView(APIView):
         conversation, _ = SupportConversation.objects.get_or_create(
             customer=request.user,
         )
+        conversation.messages.filter(
+            is_from_support=True,
+            customer_read_at__isnull=True,
+        ).update(customer_read_at=timezone.now())
         messages = conversation.messages.select_related('sender').all()
         return Response(SupportMessageSerializer(messages, many=True).data)
 
@@ -32,3 +37,19 @@ class SupportChatView(APIView):
             SupportMessageSerializer(message).data,
             status=status.HTTP_201_CREATED,
         )
+
+
+class SupportChatUnreadCountView(APIView):
+    permission_classes = (permissions.IsAuthenticated,)
+
+    def get(self, request):
+        conversation = SupportConversation.objects.filter(
+            customer=request.user,
+        ).first()
+        unread_count = 0
+        if conversation:
+            unread_count = conversation.messages.filter(
+                is_from_support=True,
+                customer_read_at__isnull=True,
+            ).count()
+        return Response({'unread_count': unread_count})
