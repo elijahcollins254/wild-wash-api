@@ -78,6 +78,8 @@ class OrderListLightSerializer(serializers.ModelSerializer):
     def get_user(self, obj):
         if not obj.user:
             return None
+        user_pickup_latitude = getattr(obj.user, "pickup_latitude", None)
+        user_pickup_longitude = getattr(obj.user, "pickup_longitude", None)
         return {
             "id": obj.user_id,
             "username": obj.user.username,
@@ -85,6 +87,8 @@ class OrderListLightSerializer(serializers.ModelSerializer):
             "last_name": obj.user.last_name,
             "phone": obj.user.phone,
             "location": obj.user.location,
+            "pickup_latitude": float(user_pickup_latitude) if user_pickup_latitude is not None else None,
+            "pickup_longitude": float(user_pickup_longitude) if user_pickup_longitude is not None else None,
         }
 
     def get_service_location(self, obj):
@@ -97,11 +101,13 @@ class OrderListLightSerializer(serializers.ModelSerializer):
         }
 
     def get_pickup_location(self, obj):
-        if obj.pickup_latitude is None or obj.pickup_longitude is None:
+        latitude = obj.pickup_latitude if obj.pickup_latitude is not None else getattr(obj.user, "pickup_latitude", None)
+        longitude = obj.pickup_longitude if obj.pickup_longitude is not None else getattr(obj.user, "pickup_longitude", None)
+        if latitude is None or longitude is None:
             return None
         return {
-            "lat": float(obj.pickup_latitude),
-            "lng": float(obj.pickup_longitude),
+            "lat": float(latitude),
+            "lng": float(longitude),
         }
 
     def get_dropoff_location(self, obj):
@@ -150,11 +156,17 @@ class RiderOrderCompactSerializer(OrderListLightSerializer):
     def get_user(self, obj):
         if not obj.user:
             return None
+        user_pickup_latitude = getattr(obj.user, "pickup_latitude", None)
+        user_pickup_longitude = getattr(obj.user, "pickup_longitude", None)
         return {
             "id": obj.user_id,
             "username": obj.user.username,
             "first_name": obj.user.first_name,
             "last_name": obj.user.last_name,
+            "phone": obj.user.phone,
+            "location": obj.user.location,
+            "pickup_latitude": float(user_pickup_latitude) if user_pickup_latitude is not None else None,
+            "pickup_longitude": float(user_pickup_longitude) if user_pickup_longitude is not None else None,
         }
 
     class Meta(OrderListLightSerializer.Meta):
@@ -451,12 +463,16 @@ class OrderListSerializer(serializers.ModelSerializer):
     def get_user(self, obj):
         if not obj.user:
             return None
+        user_pickup_latitude = getattr(obj.user, 'pickup_latitude', None)
+        user_pickup_longitude = getattr(obj.user, 'pickup_longitude', None)
         return {
             'username': obj.user.username,
             'phone': obj.user.phone,
             'location': obj.user.location,
             'first_name': obj.user.first_name,
             'last_name': obj.user.last_name,
+            'pickup_latitude': float(user_pickup_latitude) if user_pickup_latitude is not None else None,
+            'pickup_longitude': float(user_pickup_longitude) if user_pickup_longitude is not None else None,
         }
 
     def get_service_location(self, obj):
@@ -602,11 +618,13 @@ class OrderListSerializer(serializers.ModelSerializer):
         return None
 
     def get_pickup_location(self, obj):
-        """Return the order's saved pickup coordinates, if present."""
-        if obj.pickup_latitude is not None and obj.pickup_longitude is not None:
+        """Return the order's saved pickup coordinates, or the customer's saved default pickup pin."""
+        latitude = obj.pickup_latitude if obj.pickup_latitude is not None else getattr(obj.user, 'pickup_latitude', None)
+        longitude = obj.pickup_longitude if obj.pickup_longitude is not None else getattr(obj.user, 'pickup_longitude', None)
+        if latitude is not None and longitude is not None:
             return {
-                'lat': float(obj.pickup_latitude),
-                'lng': float(obj.pickup_longitude),
+                'lat': float(latitude),
+                'lng': float(longitude),
             }
         return None
 

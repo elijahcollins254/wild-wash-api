@@ -144,6 +144,40 @@ class RiderOrderListTest(TestCase):
 		self.assertEqual(response.data['count'], 1)
 		self.assertEqual(response.data['results'][0]['code'], order.code)
 
+	def test_rider_compact_payload_uses_customer_pickup_pin_when_order_pin_missing(self):
+		suffix = uuid4().hex
+		rider = User.objects.create_user(
+			username=f'rider_pin_{suffix}',
+			password='testpass123',
+			role='rider',
+		)
+		customer = User.objects.create_user(
+			username=f'customer_pin_{suffix}',
+			password='testpass123',
+			pickup_latitude='-1.286389',
+			pickup_longitude='36.817223',
+		)
+		order = Order.objects.create(
+			code=f'WW-PIN-{suffix[:20]}',
+			user=customer,
+			pickup_address='Customer pickup',
+			dropoff_address='Customer dropoff',
+			status='assigned_pickup',
+			pickup_rider=rider,
+		)
+		client = APIClient()
+		client.force_authenticate(user=rider)
+
+		response = client.get('/orders/rider/?compact=1&page_size=100')
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(response.data['count'], 1)
+		result = response.data['results'][0]
+		self.assertEqual(result['pickup_location']['lat'], -1.286389)
+		self.assertEqual(result['pickup_location']['lng'], 36.817223)
+		self.assertEqual(result['user']['pickup_latitude'], -1.286389)
+		self.assertEqual(result['user']['pickup_longitude'], 36.817223)
+
 	def test_rider_cannot_fetch_order_assigned_to_another_rider_by_code(self):
 		suffix = uuid4().hex
 		rider = User.objects.create_user(
