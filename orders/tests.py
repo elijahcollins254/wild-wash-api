@@ -92,6 +92,36 @@ class StaffOrderListTest(TestCase):
 		self.assertNotEqual(response.data['results'][0]['id'], other_assigned_order.id)
 
 
+class RiderOrderListTest(TestCase):
+	def test_compact_list_includes_assigned_rider_ids_and_display_fields(self):
+		suffix = uuid4().hex
+		rider = User.objects.create_user(
+			username=f'rider_{suffix}',
+			password='testpass123',
+			role='rider',
+		)
+		order = Order.objects.create(
+			code=f'WW-RIDER-{suffix[:20]}',
+			pickup_address='Customer pickup',
+			dropoff_address='Customer dropoff',
+			status='assigned_pickup',
+			pickup_rider=rider,
+		)
+		client = APIClient()
+		client.force_authenticate(user=rider)
+
+		response = client.get('/orders/rider/?compact=1&page_size=100')
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(response.data['count'], 1)
+		result = response.data['results'][0]
+		self.assertEqual(result['id'], order.id)
+		self.assertEqual(result['pickup_rider']['id'], rider.id)
+		self.assertEqual(result['status'], 'assigned_pickup')
+		self.assertEqual(result['pickup_address'], 'Customer pickup')
+		self.assertNotIn('is_paid', result)
+
+
 class OrderLaundryAssignmentTests(TestCase):
 	def setUp(self):
 		suffix = uuid4().hex

@@ -49,6 +49,10 @@ class OrderListLightSerializer(serializers.ModelSerializer):
     user = serializers.SerializerMethodField()
     service_location = serializers.SerializerMethodField()
     pickup_location = serializers.SerializerMethodField()
+    dropoff_location = serializers.SerializerMethodField()
+    rider = serializers.SerializerMethodField()
+    pickup_rider = serializers.SerializerMethodField()
+    delivery_rider = serializers.SerializerMethodField()
     
     def get_user_name(self, obj):
         if not obj.user:
@@ -99,13 +103,68 @@ class OrderListLightSerializer(serializers.ModelSerializer):
             "lat": float(obj.pickup_latitude),
             "lng": float(obj.pickup_longitude),
         }
+
+    def get_dropoff_location(self, obj):
+        latitude = getattr(obj.user, "latitude", None) if obj.user else None
+        longitude = getattr(obj.user, "longitude", None) if obj.user else None
+        if latitude is None or longitude is None:
+            return None
+        return {
+            "lat": float(latitude),
+            "lng": float(longitude),
+        }
+
+    @staticmethod
+    def _rider_data(rider):
+        if not rider:
+            return None
+        return {
+            "id": rider.id,
+            "username": rider.username,
+            "first_name": rider.first_name,
+            "last_name": rider.last_name,
+        }
+
+    def get_rider(self, obj):
+        return self._rider_data(obj.rider)
+
+    def get_pickup_rider(self, obj):
+        return self._rider_data(obj.pickup_rider)
+
+    def get_delivery_rider(self, obj):
+        return self._rider_data(obj.delivery_rider)
     
     class Meta:
         model = Order
         fields = [
-            "id", "code", "status", "created_at", "customer_name", "service_name",
-            "user_name", "user", "rider_name", "service_location", "price",
-            "actual_price", "is_paid", "order_type", "washer", "pickup_location"
+            "id", "code", "status", "created_at", "customer_name", "service_name", "package",
+            "user_name", "user", "rider_name", "rider", "pickup_rider", "delivery_rider",
+            "service_location", "price", "actual_price", "is_paid", "order_type",
+            "pickup_location", "dropoff_location", "pickup_address", "dropoff_address",
+            "urgency", "items", "weight_kg", "estimated_delivery", "delivered_at",
+            "picked_at", "ready_at", "quantity", "description"
+        ]
+
+
+class RiderOrderCompactSerializer(OrderListLightSerializer):
+    def get_user(self, obj):
+        if not obj.user:
+            return None
+        return {
+            "id": obj.user_id,
+            "username": obj.user.username,
+            "first_name": obj.user.first_name,
+            "last_name": obj.user.last_name,
+        }
+
+    class Meta(OrderListLightSerializer.Meta):
+        fields = [
+            "id", "code", "status", "created_at", "customer_name", "service_name", "package",
+            "user_name", "user", "rider_name", "rider", "pickup_rider", "delivery_rider",
+            "service_location", "price", "actual_price", "order_type",
+            "pickup_location", "dropoff_location", "pickup_address", "dropoff_address",
+            "urgency", "items", "weight_kg", "estimated_delivery", "delivered_at",
+            "picked_at", "ready_at", "quantity", "description"
         ]
 
 

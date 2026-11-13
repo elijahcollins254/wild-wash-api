@@ -3,6 +3,7 @@ from django.db import models
 from django.db.models import Prefetch
 from django.db import transaction
 from rest_framework import generics, permissions, status
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from .models import Order, OrderRating
@@ -372,6 +373,19 @@ class RiderOrderListView(generics.ListAPIView):
     serializer_class = OrderListSerializer
     permission_classes = [permissions.IsAuthenticated]
 
+    class RiderOrderPagination(PageNumberPagination):
+        page_size = 50
+        page_size_query_param = 'page_size'
+        max_page_size = 100
+
+    pagination_class = RiderOrderPagination
+
+    def get_serializer_class(self):
+        if self.request.query_params.get('compact') == '1':
+            from .serializers import RiderOrderCompactSerializer
+            return RiderOrderCompactSerializer
+        return self.serializer_class
+
     def get_queryset(self):
         """
         Get orders based on user's staff type
@@ -416,11 +430,11 @@ class RiderOrderListView(generics.ListAPIView):
                 status__in=['requested', 'assigned_pickup', 'picked', 'in_progress', 'washed', 'folded', 'ready', 'assigned_delivery', 'delivered']
             ).exclude(
                 services__name__in=excluded_services
-            ).distinct().select_related('user', 'service', 'rider', 'pickup_rider', 'delivery_rider', 'service_location').prefetch_related('services').order_by('-created_at')
-            
-            print(f"\n[DEBUG RiderOrders] Rider {user.username} (ID: {user.id}) querying orders")
-            print(f"[DEBUG] Total orders assigned to this rider: {queryset.count()}")
-            print(f"[DEBUG] Checking rider={user}, pickup_rider={user}, delivery_rider={user}")
+            ).distinct().select_related(
+                'user', 'service', 'rider', 'pickup_rider', 'delivery_rider', 'service_location'
+            ).order_by('-created_at')
+            if self.request.query_params.get('compact') != '1':
+                queryset = queryset.prefetch_related('services')
         
         return queryset
 
