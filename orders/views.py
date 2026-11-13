@@ -436,6 +436,10 @@ class RiderOrderListView(generics.ListAPIView):
             if self.request.query_params.get('compact') != '1':
                 queryset = queryset.prefetch_related('services')
         
+        order_code = self.request.query_params.get('code')
+        if order_code:
+            queryset = queryset.filter(code=order_code)
+
         return queryset
 
     def post(self, request, *args, **kwargs):
