@@ -16,6 +16,7 @@ africastalking
 # async / realtime / background tasks
 channels
 channels-redis
+daphne
 celery
 redis
 django-celery-beat

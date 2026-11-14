@@ -1,1 +1,1 @@
-web: gunicorn api.wsgi:app --bind 0.0.0.0:8000
+web: daphne -b 0.0.0.0 -p 8000 api.asgi:application

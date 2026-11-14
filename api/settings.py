@@ -54,6 +54,7 @@ INSTALLED_APPS = [
     'financing',
     'casino',
     'chat',
+    'channels',
     'rest_framework',
     'rest_framework.authtoken',
     'corsheaders',
@@ -90,6 +91,22 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'api.wsgi.app'
+ASGI_APPLICATION = 'api.asgi.application'
+
+CHANNEL_REDIS_URL = os.getenv('CHANNEL_REDIS_URL') or os.getenv('REDIS_URL')
+if CHANNEL_REDIS_URL:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {'hosts': [CHANNEL_REDIS_URL]},
+        },
+    }
+else:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        },
+    }
 
 
 REST_FRAMEWORK = {
@@ -232,6 +249,7 @@ from corsheaders.defaults import default_headers
 # Ensure the Authorization header (and other common headers) are allowed in CORS
 CORS_ALLOW_HEADERS = list(default_headers) + [
     'authorization',
+    'last-event-id',
 ]
 
 
