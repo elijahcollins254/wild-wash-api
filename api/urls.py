@@ -35,6 +35,5 @@ urlpatterns = [
     path('offers/', include('offers.urls')),
     path('user/', include('subscriptions.urls')),
     path('loans/', include('financing.urls')),
-    path('casino/', include('casino.urls')),
     path('chat/', include('chat.urls')),
 ]

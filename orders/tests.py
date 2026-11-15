@@ -1,11 +1,19 @@
+import asyncio
 from unittest import TestCase
 from uuid import uuid4
 
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 from unittest.mock import patch
 
 from .models import Order
+from .events import (
+	customer_orders_group,
+	order_event_stream,
+	user_order_event_groups,
+)
 from users.models import Location
 from notifications.models import Notification
 
@@ -90,6 +98,103 @@ class StaffOrderListTest(TestCase):
 		self.assertEqual(response.data['results'][0]['id'], local_order.id)
 		self.assertNotEqual(response.data['results'][0]['id'], unassigned_order.id)
 		self.assertNotEqual(response.data['results'][0]['id'], other_assigned_order.id)
+
+
+class OrderEventsTest(TestCase):
+	def setUp(self):
+		self.user = User.objects.create_user(
+			username=f'events_customer_{uuid4().hex}',
+			password='testpass123',
+		)
+		self.client = APIClient()
+
+	def test_order_events_require_authentication(self):
+		self.assertEqual(self.client.get('/orders/events/').status_code, 401)
+
+	def test_authenticated_user_gets_sse_stream(self):
+		self.client.force_authenticate(user=self.user)
+
+		response = self.client.get('/orders/events/')
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(response['Content-Type'], 'text/event-stream')
+		self.assertEqual(response['Cache-Control'], 'no-cache, no-transform')
+		self.assertEqual(response['X-Accel-Buffering'], 'no')
+		response.close()
+
+	def test_customer_event_stream_receives_updates_for_own_orders(self):
+		channel_layer = get_channel_layer()
+		group_name = customer_orders_group(self.user.id)
+		channel_name = async_to_sync(channel_layer.new_channel)('test-orders')
+		async_to_sync(channel_layer.group_add)(group_name, channel_name)
+
+		async def receive_order_event():
+			stream = order_event_stream([group_name])
+			try:
+				self.assertEqual(
+					await anext(stream),
+					'event: order_update\ndata: {"order_id": null}\n\n',
+				)
+				await channel_layer.group_send(
+					group_name,
+					{'type': 'orders.changed', 'order_id': 42},
+				)
+				return await asyncio.wait_for(anext(stream), timeout=2)
+			finally:
+				await stream.aclose()
+
+		try:
+			event = async_to_sync(receive_order_event)()
+		finally:
+			async_to_sync(channel_layer.group_discard)(group_name, channel_name)
+
+		self.assertIn('event: order_update\n', event)
+		self.assertIn('"order_id": 42', event)
+
+	def test_order_save_publishes_to_customer_event_group(self):
+		channel_layer = get_channel_layer()
+		group_name = customer_orders_group(self.user.id)
+		channel_name = async_to_sync(channel_layer.new_channel)('test-orders')
+		async_to_sync(channel_layer.group_add)(group_name, channel_name)
+		try:
+			with self.captureOnCommitCallbacks(execute=True):
+				order = Order.objects.create(
+					code=f'WW-EVENT-{uuid4().hex[:16]}',
+					user=self.user,
+					pickup_address='Customer pickup',
+					dropoff_address='Customer dropoff',
+				)
+
+			event = async_to_sync(channel_layer.receive)(channel_name)
+		finally:
+			async_to_sync(channel_layer.group_discard)(group_name, channel_name)
+
+		self.assertEqual(event['type'], 'orders.changed')
+		self.assertEqual(event['order_id'], order.id)
+
+	def test_order_events_are_scoped_by_user_role(self):
+		location = Location.objects.create(name=f'Events location {uuid4().hex}')
+		staff = User.objects.create_user(
+			username=f'events_staff_{uuid4().hex}',
+			password='testpass123',
+			role='staff',
+			service_location=location,
+		)
+		rider = User.objects.create_user(
+			username=f'events_rider_{uuid4().hex}',
+			password='testpass123',
+			role='rider',
+		)
+
+		self.assertEqual(
+			user_order_event_groups(self.user),
+			[customer_orders_group(self.user.id)],
+		)
+		self.assertEqual(
+			user_order_event_groups(staff),
+			[f'orders-staff-location-{location.id}'],
+		)
+		self.assertEqual(user_order_event_groups(rider), ['orders-riders'])
 
 
 class RiderOrderListTest(TestCase):

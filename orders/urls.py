@@ -2,6 +2,7 @@
 
 from django.urls import path
 from .views import (
+    OrderEventsView,
     OrderListCreateView, 
     OrderUpdateView, 
     RiderOrderListView,
@@ -16,6 +17,7 @@ from .views import (
 )
 
 urlpatterns = [
+    path('events/', OrderEventsView.as_view(), name='order-events'),
     path('', OrderListCreateView.as_view(), name='order-list'),
     path('washer-analytics/', WasherAnalyticsView.as_view(), name='washer-analytics'),
     path('assign-location/', AssignOrderLocationView.as_view(), name='order-assign-location'),

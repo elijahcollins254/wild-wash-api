@@ -2,17 +2,41 @@
 from django.db import models
 from django.db.models import Prefetch
 from django.db import transaction
+from channels.layers import get_channel_layer
+from django.http import StreamingHttpResponse
 from rest_framework import generics, permissions, status
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from .models import Order, OrderRating
+from .events import order_event_stream, user_order_event_groups
 from .serializers import OrderListSerializer, OrderCreateSerializer, OrderRatingSerializer
 from users.permissions import LocationBasedPermission
 from users.models import Location
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+class OrderEventsView(APIView):
+    """Stream order-change notifications for the authenticated user's role."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        channel_layer = get_channel_layer()
+        if channel_layer is None:
+            return Response(
+                {'detail': 'Order events are temporarily unavailable.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        response = StreamingHttpResponse(
+            order_event_stream(user_order_event_groups(request.user)),
+            content_type='text/event-stream',
+        )
+        response['Cache-Control'] = 'no-cache, no-transform'
+        response['X-Accel-Buffering'] = 'no'
+        return response
 
 
 class WasherAnalyticsView(APIView):

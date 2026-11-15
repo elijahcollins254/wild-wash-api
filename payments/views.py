@@ -586,7 +586,7 @@ class MpesaSTKPushView(views.APIView):
         """Initiate M-Pesa STK Push payment."""
         amount = request.data.get('amount')
         phone = request.data.get('phone')
-        order_id = request.data.get('order_id')  # Can be null for game wallet top-ups
+        order_id = request.data.get('order_id')
         
         logger.info(f"STK Push request: amount={amount}, phone={phone}, order_id={order_id}")
         
@@ -600,7 +600,7 @@ class MpesaSTKPushView(views.APIView):
                 phone = request.user.profile.phone_number
                 logger.info(f"Using phone from user.profile: {phone}")
         
-        # Validate input - order_id is optional (null for game wallet top-ups)
+        # Validate required payment fields.
         if not all([amount, phone]):
             error_msg = f'Missing required fields: amount={bool(amount)}, phone={bool(phone)}'
             logger.error(error_msg)
@@ -621,19 +621,22 @@ class MpesaSTKPushView(views.APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        order = None
-        if order_id is not None and order_id != 'GAME_WALLET_TOPUP':
-            if not request.user.is_authenticated:
-                return Response({'detail': 'Authentication is required to pay for an order'}, status=status.HTTP_401_UNAUTHORIZED)
-            try:
-                order = Order.objects.get(code=order_id)
-            except Order.DoesNotExist:
-                return Response({'detail': f'Order not found: {order_id}'}, status=status.HTTP_400_BAD_REQUEST)
-            if order.user_id != request.user.id and not request.user.is_staff:
-                return Response({'detail': 'You do not have permission to pay for this order'}, status=status.HTTP_403_FORBIDDEN)
-            validation_error = self._validate_mpesa_order_amount(order, amount_decimal)
-            if validation_error:
-                return validation_error
+        if not order_id:
+            return Response(
+                {'detail': 'Order ID is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        if not request.user.is_authenticated:
+            return Response({'detail': 'Authentication is required to pay for an order'}, status=status.HTTP_401_UNAUTHORIZED)
+        try:
+            order = Order.objects.get(code=order_id)
+        except Order.DoesNotExist:
+            return Response({'detail': f'Order not found: {order_id}'}, status=status.HTTP_400_BAD_REQUEST)
+        if order.user_id != request.user.id and not request.user.is_staff:
+            return Response({'detail': 'You do not have permission to pay for this order'}, status=status.HTTP_403_FORBIDDEN)
+        validation_error = self._validate_mpesa_order_amount(order, amount_decimal)
+        if validation_error:
+            return validation_error
 
         order_reference = order_id
         
@@ -665,9 +668,7 @@ class MpesaSTKPushView(views.APIView):
             # Get access token from Daraja API
             access_token = self._get_access_token()
             
-            # Determine if this is a game wallet top-up (order_id is null)
-            is_game_wallet_topup = order_id is None
-            account_reference = order_id if order_id else 'GAME_WALLET_TOPUP'
+            account_reference = order_id
             
             # Initiate STK Push
             stk_response = self._initiate_stk_push(
@@ -687,17 +688,16 @@ class MpesaSTKPushView(views.APIView):
                 status='pending',
                 raw_payload={
                     'order_reference': account_reference,
-                    'is_game_wallet': is_game_wallet_topup
                 }
             )
             payment.mark_initiated(provider_reference=checkout_request_id)
             
-            logger.info(f"Payment initiated successfully: {checkout_request_id}, is_game_wallet: {is_game_wallet_topup}")
+            logger.info(f"Payment initiated successfully: {checkout_request_id}")
             return Response({
                 'status': 'success',
                 'message': 'STK push sent to your phone',
                 'checkout_request_id': stk_response.get('CheckoutRequestID'),
-                'order_id': order_id or 'GAME_WALLET_TOPUP',
+                'order_id': order_id,
                 'amount': amount
             }, status=status.HTTP_200_OK)
             
@@ -976,29 +976,10 @@ class MpesaCallbackView(views.APIView):
                         except Exception as e:
                             logger.error(f"Error reducing BNPL balance: {str(e)}", exc_info=True)
                     
-                    # Check if this is a game wallet top-up
-                    elif (payment.raw_payload or {}).get('is_game_wallet', False) and payment.user:
-                        # Credit the game wallet
-                        try:
-                            from decimal import Decimal
-                            from casino.models import GameWallet
-                            
-                            wallet, _ = GameWallet.objects.get_or_create(user=payment.user)
-                            amount_decimal = Decimal(str(payment.amount))
-                            wallet.add_funds(
-                                amount_decimal,
-                                source='mpesa',
-                                payment_id=payment.pk,
-                                notes=f'M-Pesa top-up via STK Push'
-                            )
-                            logger.info(f"Updated game wallet for user {payment.user}: added KES {amount_decimal}, new balance: {wallet.balance}")
-                        except Exception as e:
-                            logger.error(f"Error updating game wallet: {str(e)}", exc_info=True)
-                    
                     else:
                         # Update order's payment_method to reflect M-Pesa
                         order_reference = (payment.raw_payload or {}).get('order_reference')
-                        if order_reference and order_reference != 'GAME_WALLET_TOPUP' and not order_reference.startswith('BNPL_BALANCE'):
+                        if order_reference and not order_reference.startswith('BNPL_BALANCE'):
                             try:
                                 order = Order.objects.get(code=order_reference)
                                 order.payment_method = 'mpesa'

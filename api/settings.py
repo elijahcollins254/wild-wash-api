@@ -52,7 +52,6 @@ INSTALLED_APPS = [
     'offers',
     'subscriptions',
     'financing',
-    'casino',
     'chat',
     'channels',
     'rest_framework',

@@ -8,3 +8,4 @@ class OrdersConfig(AppConfig):
     def ready(self):
         """Register signals when app is ready"""
         import orders.signals
+        import orders.order_events
