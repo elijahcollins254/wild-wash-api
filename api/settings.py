@@ -2,12 +2,44 @@
 Django settings for api project.
 """
 
+import ipaddress
+import logging
+import os
 from pathlib import Path
 
-import os
+import requests
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+
+def _get_ec2_private_ip() -> str | None:
+    if os.getenv('AWS_EC2_METADATA_DISABLED', '').lower() == 'true':
+        return None
+
+    try:
+        token_response = requests.put(
+            'http://169.254.169.254/latest/api/token',
+            headers={'X-aws-ec2-metadata-token-ttl-seconds': '21600'},
+            timeout=1,
+        )
+        token_response.raise_for_status()
+        token = token_response.text.strip()
+
+        ip_response = requests.get(
+            'http://169.254.169.254/latest/meta-data/local-ipv4',
+            headers={'X-aws-ec2-metadata-token': token},
+            timeout=1,
+        )
+        ip_response.raise_for_status()
+        private_ip = ip_response.text.strip()
+        ipaddress.IPv4Address(private_ip)
+        return private_ip
+    except (requests.RequestException, ValueError) as error:
+        logger.warning('Unable to retrieve EC2 private IP for ALLOWED_HOSTS: %s', error)
+        return None
 
 GOOGLE_OAUTH_CLIENT_IDS = tuple(
     client_id.strip()
@@ -31,7 +63,10 @@ DEBUG = True
 # Check if we're in Vercel build mode
 VERCEL_BUILD = os.getenv('VERCEL_BUILD') == '1'
 
-ALLOWED_HOSTS = ['https://www.wildwash.co.ke','api.wildwash.co.ke', 'wildwash-backend-env.eba-h8s6kh2m.eu-north-1.elasticbeanstalk.com', '172.31.47.64', '13.63.23.153', '127.0.0.1', 'localhost', '.vercel.app', 'wildwash.kibeezy.com', 'wildwash.co.ke', 'rain.wildwash.co.ke', '8000-firebase-wild-wash-apigit-1760697854679.cluster-lu4mup47g5gm4rtyvhzpwbfadi.cloudworkstations.dev', '3000-firebase-wildwashgit-1760698481871.cluster-ikslh4rdsnbqsvu5nw3v4dqjj2.cloudworkstations.dev']
+ALLOWED_HOSTS = ['www.wildwash.co.ke', 'api.wildwash.co.ke', 'wildwash-backend-env.eba-h8s6kh2m.eu-north-1.elasticbeanstalk.com', '13.63.23.153', '127.0.0.1', 'localhost', '.vercel.app', 'wildwash.kibeezy.com', 'wildwash.co.ke', 'rain.wildwash.co.ke', '8000-firebase-wild-wash-apigit-1760697854679.cluster-lu4mup47g5gm4rtyvhzpwbfadi.cloudworkstations.dev', '3000-firebase-wildwashgit-1760698481871.cluster-ikslh4rdsnbqsvu5nw3v4dqjj2.cloudworkstations.dev']
+EC2_PRIVATE_IP = _get_ec2_private_ip()
+if EC2_PRIVATE_IP:
+    ALLOWED_HOSTS.append(EC2_PRIVATE_IP)
 
 
 # Application definition
