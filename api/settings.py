@@ -1,5 +1,5 @@
 """
-Django settings for api project.
+Django settings 
 """
 
 import ipaddress
