@@ -2,6 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from django.db import transaction
 from django.utils import timezone
 from django.db import models
 from django.http import JsonResponse
@@ -92,14 +93,46 @@ class OfferSubscriptionViewSet(viewsets.ViewSet):
             return Response({'is_subscribed': False})
 
         elif request.method == 'POST':
-            subscription, created = OfferNotificationSubscription.objects.get_or_create(
-                user=request.user,
-                defaults={'phone_number': request.user.phone}
+            phone_number = request.user.phone or None
+            conflict = Response(
+                {'detail': 'This phone number is already linked to another offer subscription.'},
+                status=status.HTTP_409_CONFLICT,
             )
-            subscription.is_active = True
-            subscription.phone_number = request.user.phone or subscription.phone_number
-            subscription.save()
-            
+
+            with transaction.atomic():
+                subscription = OfferNotificationSubscription.objects.select_for_update().filter(
+                    user=request.user,
+                ).first()
+                created = False
+
+                if subscription is None:
+                    if phone_number:
+                        subscription, created = OfferNotificationSubscription.objects.get_or_create(
+                            phone_number=phone_number,
+                            defaults={'user': request.user},
+                        )
+                        if subscription.user_id not in (None, request.user.pk):
+                            return conflict
+                        if subscription.user_id is None:
+                            subscription.user = request.user
+                    else:
+                        subscription, created = OfferNotificationSubscription.objects.get_or_create(
+                            user=request.user,
+                            defaults={'phone_number': None},
+                        )
+                elif phone_number and subscription.phone_number != phone_number:
+                    matching_subscription = OfferNotificationSubscription.objects.select_for_update().filter(
+                        phone_number=phone_number,
+                    ).exclude(pk=subscription.pk).first()
+                    if matching_subscription:
+                        if matching_subscription.user_id is not None:
+                            return conflict
+                        matching_subscription.delete()
+                    subscription.phone_number = phone_number
+
+                subscription.is_active = True
+                subscription.save()
+
             serializer = OfferNotificationSubscriptionSerializer(subscription)
             return Response(serializer.data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
