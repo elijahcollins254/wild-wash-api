@@ -6,8 +6,22 @@ from django.db import transaction
 from django.utils import timezone
 from django.db import models
 from django.http import JsonResponse
-from .models import Offer, UserOffer, OfferNotificationSubscription
-from .serializers import OfferSerializer, UserOfferSerializer, OfferNotificationSubscriptionSerializer
+from .models import Offer, UserOffer, OfferNotificationSubscription, Banner
+from .serializers import OfferSerializer, UserOfferSerializer, OfferNotificationSubscriptionSerializer, BannerSerializer
+
+
+class BannerViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = BannerSerializer
+    permission_classes = [AllowAny]
+
+    def get_queryset(self):
+        now = timezone.now()
+        return Banner.objects.filter(
+            is_active=True,
+            valid_from__lte=now,
+        ).filter(
+            models.Q(valid_until__isnull=True) | models.Q(valid_until__gt=now)
+        ).order_by('sort_order', '-created_at')
 
 class OfferViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Offer.objects.filter(is_active=True)

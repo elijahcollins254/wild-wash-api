@@ -24,6 +24,38 @@ class Offer(models.Model):
     def __str__(self):
         return self.title
 
+
+class Banner(models.Model):
+    title = models.CharField(max_length=200)
+    image_url = models.URLField(
+        max_length=1000,
+        verbose_name='Image URL',
+        help_text='Public image URL for this homepage carousel banner.',
+    )
+    button_text = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text='Text shown on the banner button, for example: Explore services.',
+    )
+    link_url = models.URLField(
+        max_length=1000,
+        help_text='Where the banner button or image should open.',
+    )
+    is_active = models.BooleanField(default=True)
+    valid_from = models.DateTimeField(default=timezone.now)
+    valid_until = models.DateTimeField(null=True, blank=True)
+    sort_order = models.PositiveIntegerField(
+        default=0,
+        help_text='Lower numbers appear first.',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ('sort_order', '-created_at')
+
+    def __str__(self):
+        return self.title
+
 class UserOffer(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='claimed_offers')
     offer = models.ForeignKey(Offer, on_delete=models.CASCADE, related_name='user_claims')

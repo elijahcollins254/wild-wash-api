@@ -1,5 +1,14 @@
 from rest_framework import serializers
-from .models import Offer, UserOffer, OfferNotificationSubscription
+from .models import Offer, UserOffer, OfferNotificationSubscription, Banner
+
+
+class BannerSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Banner
+        fields = [
+            'id', 'title', 'image_url', 'button_text', 'link_url',
+            'is_active', 'valid_from', 'valid_until', 'sort_order',
+        ]
 
 class OfferSerializer(serializers.ModelSerializer):
     is_claimed = serializers.SerializerMethodField()

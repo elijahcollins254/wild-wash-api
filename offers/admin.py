@@ -1,5 +1,21 @@
 from django.contrib import admin
-from .models import Offer, UserOffer, OfferNotificationSubscription
+from .models import Offer, UserOffer, OfferNotificationSubscription, Banner
+
+
+@admin.register(Banner)
+class BannerAdmin(admin.ModelAdmin):
+    list_display = ('title', 'button_text', 'link_url', 'sort_order', 'is_active', 'valid_from', 'valid_until')
+    list_filter = ('is_active', 'valid_from', 'valid_until')
+    search_fields = ('title', 'button_text', 'link_url')
+    ordering = ('sort_order', '-created_at')
+    fieldsets = (
+        ('Banner Content', {
+            'fields': ('title', 'image_url', 'button_text', 'link_url'),
+        }),
+        ('Visibility', {
+            'fields': ('is_active', 'sort_order', 'valid_from', 'valid_until'),
+        }),
+    )
 
 @admin.register(Offer)
 class OfferAdmin(admin.ModelAdmin):

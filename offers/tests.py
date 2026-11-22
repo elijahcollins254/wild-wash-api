@@ -3,7 +3,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 from django.utils import timezone
 
-from .models import Offer, OfferNotificationSubscription
+from .models import Offer, OfferNotificationSubscription, Banner
 
 
 User = get_user_model()
@@ -73,3 +73,20 @@ class OfferImageTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['image_url'], offer.image_url)
+
+
+class BannerTests(APITestCase):
+    def test_active_banner_is_exposed_publicly(self):
+        banner = Banner.objects.create(
+            title='Android app',
+            image_url='https://cdn.example.com/banner.png',
+            button_text='Install app',
+            link_url='https://play.google.com/store/apps/details?id=com.kibeezy.ww',
+        )
+
+        response = self.client.get('/offers/banners')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payload = response.data
+        items = payload['results'] if isinstance(payload, dict) and 'results' in payload else payload
+        self.assertTrue(any(item['id'] == banner.id for item in items))
