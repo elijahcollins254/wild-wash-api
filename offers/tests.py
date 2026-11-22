@@ -1,8 +1,9 @@
 from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APITestCase
+from django.utils import timezone
 
-from .models import OfferNotificationSubscription
+from .models import Offer, OfferNotificationSubscription
 
 
 User = get_user_model()
@@ -56,3 +57,19 @@ class OfferNotificationSubscriptionTests(APITestCase):
         self.assertEqual(first_response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(second_response.status_code, status.HTTP_200_OK)
         self.assertEqual(OfferNotificationSubscription.objects.count(), 1)
+
+
+class OfferImageTests(APITestCase):
+    def test_offer_image_url_is_exposed_by_public_detail_endpoint(self):
+        offer = Offer.objects.create(
+            title='Spring cleaning',
+            description='Save on home cleaning.',
+            code='SPRING',
+            valid_from=timezone.now(),
+            image_url='https://cdn.example.com/offers/spring.jpg',
+        )
+
+        response = self.client.get(f'/offers/{offer.id}')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['image_url'], offer.image_url)

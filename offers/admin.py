@@ -7,6 +7,10 @@ class OfferAdmin(admin.ModelAdmin):
     list_filter = ('is_active', 'valid_from', 'valid_until')
     search_fields = ('title', 'code', 'description')
     readonly_fields = ('current_uses',)
+    fields = (
+        'title', 'description', 'image_url', 'discount_percent', 'discount_amount',
+        'code', 'valid_from', 'valid_until', 'is_active', 'max_uses', 'current_uses',
+    )
 
 @admin.register(UserOffer)
 class UserOfferAdmin(admin.ModelAdmin):

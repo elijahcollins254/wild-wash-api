@@ -5,6 +5,12 @@ from django.utils import timezone
 class Offer(models.Model):
     title = models.CharField(max_length=200)
     description = models.TextField()
+    image_url = models.URLField(
+        max_length=1000,
+        blank=True,
+        verbose_name='Image URL',
+        help_text='Public image URL for this offer.',
+    )
     discount_percent = models.IntegerField(default=0)
     discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     code = models.CharField(max_length=50, unique=True)

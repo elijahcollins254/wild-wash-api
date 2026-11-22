@@ -7,7 +7,7 @@ class OfferSerializer(serializers.ModelSerializer):
     class Meta:
         model = Offer
         fields = [
-            'id', 'title', 'description', 'discount_percent', 
+            'id', 'title', 'description', 'image_url', 'discount_percent',
             'discount_amount', 'code', 'valid_from', 'valid_until', 
             'is_active', 'max_uses', 'current_uses', 'is_claimed'
         ]
