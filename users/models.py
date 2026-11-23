@@ -28,6 +28,9 @@ def format_phone_number(phone_number):
     if phone.startswith('+'):
         phone = phone[1:]
     
+    if not phone:
+        return None
+
     # If starts with 0, replace with 254 (Kenya country code)
     # This handles both mobile (07x) and landline (011, 020, etc.) formats
     if phone.startswith('0'):
@@ -73,7 +76,7 @@ class User(AbstractUser):
         ("fumigator", "Fumigator"),
     )
 
-    phone = models.CharField(max_length=20, null=True, blank=True)  # Phone number for SMS notifications and login
+    phone = models.CharField(max_length=20, null=True, blank=True, unique=True)  # Phone number for SMS notifications and login
     service_location = models.ForeignKey(
         Location, 
         on_delete=models.SET_NULL,
@@ -107,7 +110,7 @@ class User(AbstractUser):
 
     def save(self, *args, **kwargs):
         """Auto-format phone number to international format before saving"""
-        if self.phone:
+        if self.phone is not None:
             self.phone = format_phone_number(self.phone)
         super().save(*args, **kwargs)
 

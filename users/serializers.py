@@ -7,6 +7,20 @@ from .models import DataDeletionRequest, Location, ActivityLog, format_phone_num
 
 User = get_user_model()
 
+
+def _validate_unique_phone(value, instance=None):
+    normalized_phone = format_phone_number(value)
+    if normalized_phone:
+        users_with_phone = User.objects.filter(phone=normalized_phone)
+        if instance is not None:
+            users_with_phone = users_with_phone.exclude(pk=instance.pk)
+        if users_with_phone.exists():
+            raise serializers.ValidationError(
+                "This phone number is already assigned to another user."
+            )
+    return normalized_phone
+
+
 class LocationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Location
@@ -73,6 +87,7 @@ class StaffCreateSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     service_location_display = serializers.SerializerMethodField()
     created_at = serializers.SerializerMethodField()
+    phone = serializers.CharField(required=False, allow_null=True, allow_blank=True)
 
     class Meta:
         model = User
@@ -109,6 +124,9 @@ class UserSerializer(serializers.ModelSerializer):
         """Return date_joined as created_at for frontend compatibility"""
         return obj.date_joined
 
+    def validate_phone(self, value):
+        return _validate_unique_phone(value, self.instance)
+
 
 class UserCreateSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=6)
@@ -130,7 +148,7 @@ class UserCreateSerializer(serializers.ModelSerializer):
         digits = re.sub(r"\D", "", value)
         if not re.fullmatch(r"(?:0[17]\d{8}|254[17]\d{8})", digits):
             raise serializers.ValidationError("Please enter a valid Kenya phone number.")
-        return format_phone_number(value)
+        return _validate_unique_phone(value)
 
     def create(self, validated_data):
         password = validated_data.pop("password")

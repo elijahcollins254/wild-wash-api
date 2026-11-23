@@ -122,15 +122,16 @@ class ProfileSetupView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Update user profile
-        user.first_name = request.data.get('first_name', '').strip()
-        user.last_name = request.data.get('last_name', '').strip()
-        user.phone = request.data.get('phone', '').strip()
-        user.location = request.data.get('location', '').strip()
-        user.pickup_address = request.data.get('pickup_address', '').strip()
-        user.profile_complete = True
-        
-        user.save()
+        serializer = UserSerializer(user, data={
+            'first_name': request.data.get('first_name', '').strip(),
+            'last_name': request.data.get('last_name', '').strip(),
+            'phone': request.data.get('phone', '').strip(),
+            'location': request.data.get('location', '').strip(),
+            'pickup_address': request.data.get('pickup_address', '').strip(),
+            'profile_complete': True,
+        }, partial=True)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
         
         # Log the activity
         log_activity(
@@ -235,13 +236,11 @@ class LoginView(APIView):
                     user = User.objects.get(phone=phone, is_active=True)
                 except User.DoesNotExist:
                     pass
-            except User.MultipleObjectsReturned:
-                # Multiple users with same phone - this is a database integrity issue
-                # Try to get the most recently created active user
-                try:
-                    user = User.objects.filter(phone=formatted_phone, is_active=True).order_by('-date_joined').first()
-                except Exception:
+                except User.MultipleObjectsReturned:
                     pass
+            except User.MultipleObjectsReturned:
+                # Do not authenticate an arbitrary account while duplicates are being resolved.
+                user = None
         
         # Try email authentication if phone didn't work
         if not user and email:
@@ -388,6 +387,10 @@ class AdminLoginView(APIView):
                     user = User.objects.get(phone=phone)
                 except User.DoesNotExist:
                     pass
+                except User.MultipleObjectsReturned:
+                    pass
+            except User.MultipleObjectsReturned:
+                pass
         
         # Try email if phone didn't work
         if not user and email:
@@ -464,6 +467,10 @@ class StaffLoginView(APIView):
                     user = User.objects.get(phone=phone)
                 except User.DoesNotExist:
                     pass
+                except User.MultipleObjectsReturned:
+                    pass
+            except User.MultipleObjectsReturned:
+                pass
         
         # Try email if phone didn't work
         if not user and email:

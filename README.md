@@ -108,6 +108,17 @@ connection in deployed environments so replies reach chat connections across
 web processes and instances. Without it, Django uses an in-memory channel layer,
 which is suitable only for local, single-process development.
 
+## Unique user phone numbers
+
+Before deploying the migration that makes user phone numbers unique, run
+`python manage.py audit_duplicate_phones` and save the report so you can
+reassign numbers afterward, and retain a database backup. The migration clears
+the phone number from every account in each duplicate group, then enforces
+uniqueness. This data cleanup cannot be reversed by rolling back migrations. It
+does not merge or delete accounts; users without a phone number can keep `phone`
+empty. Re-add each number manually only to the account you have verified should
+own it.
+
 ## One-Click Deploy
 
 Deploy the example using [Vercel](https://vercel.com?utm_source=github&utm_medium=readme&utm_campaign=vercel-examples):

@@ -117,6 +117,23 @@ class RegistrationPhoneValidationTests(APITestCase):
 		self.assertEqual(response.data['phone'], '+254116629591')
 		self.assertEqual(User.objects.get(username='kenya_phone_user').phone, '+254116629591')
 
+	def test_registration_rejects_an_existing_phone_in_another_format(self):
+		User.objects.create_user(
+			username='existing_phone_user',
+			phone='+254116629591',
+			password='StrongPass123',
+		)
+
+		response = self.client.post('/users/register/', {
+			'username': 'duplicate_phone_user',
+			'phone': '0116629591',
+			'password': 'StrongPass123',
+		}, format='json')
+
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+		self.assertIn('phone', response.data)
+		self.assertFalse(User.objects.filter(username='duplicate_phone_user').exists())
+
 
 class UserProfilePatchTests(APITestCase):
 	def test_partial_update_handles_null_profile_fields(self):
@@ -129,3 +146,19 @@ class UserProfilePatchTests(APITestCase):
 		user.refresh_from_db()
 		self.assertEqual(user.first_name, 'Alex')
 		self.assertFalse(user.profile_complete)
+
+	def test_profile_update_rejects_another_users_phone(self):
+		user = User.objects.create_user(username='profile_patch_user', password='StrongPass123')
+		User.objects.create_user(
+			username='phone_owner',
+			phone='0712345678',
+			password='StrongPass123',
+		)
+		self.client.force_authenticate(user=user)
+
+		response = self.client.patch('/users/me/', {'phone': '0712345678'}, format='json')
+
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+		self.assertIn('phone', response.data)
+		user.refresh_from_db()
+		self.assertIsNone(user.phone)
