@@ -353,17 +353,8 @@ class Order(models.Model):
         super().save(*args, **kwargs)
 
     def get_total_price(self):
-        """Calculate the catalog total, including each service quantity."""
-        order_items = self.order_items.select_related('service').all()
-        if order_items.exists():
-            return sum(
-                (item.service.price * item.quantity for item in order_items),
-                Decimal('0'),
-            )
-        return sum(
-            (service.price for service in self.services.all()),
-            Decimal('0'),
-        )
+        """Calculate total price from all services"""
+        return sum(service.price for service in self.services.all())
 
     def get_latest_staff_price(self):
         """
@@ -518,21 +509,16 @@ class OrderEvent(models.Model):
         return f"OrderEvent({self.order.code}): {self.event_type} @ {self.created_at}"
 
 
-class OrderRating(models.Model):
-    order = models.OneToOneField(
-        Order,
-        on_delete=models.CASCADE,
-        related_name='rating',
-    )
-    customer = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='order_ratings',
-    )
+class OrderReview(models.Model):
+    order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name='review')
+    customer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='order_reviews')
     rating = models.PositiveSmallIntegerField()
-    comment = models.TextField(blank=True, max_length=1000)
+    feedback = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        ordering = ['-created_at']
+
     def __str__(self):
-        return f'{self.order.code}: {self.rating}/5'
+        return f'{self.order.code} review ({self.rating}/5)'

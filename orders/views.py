@@ -1,42 +1,13 @@
 # orders/views.py
 from django.db import models
 from django.db.models import Prefetch
-from django.db import transaction
-from channels.layers import get_channel_layer
-from django.http import StreamingHttpResponse
 from rest_framework import generics, permissions, status
-from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from .models import Order, OrderRating
-from .events import order_event_stream, user_order_event_groups
-from .serializers import OrderListSerializer, OrderCreateSerializer, OrderRatingSerializer
+from .models import Order, OrderReview
+from .serializers import OrderListSerializer, OrderCreateSerializer, OrderReviewSerializer
 from users.permissions import LocationBasedPermission
 from users.models import Location
-import logging
-
-logger = logging.getLogger(__name__)
-
-
-class OrderEventsView(APIView):
-    """Stream order-change notifications for the authenticated user's role."""
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get(self, request):
-        channel_layer = get_channel_layer()
-        if channel_layer is None:
-            return Response(
-                {'detail': 'Order events are temporarily unavailable.'},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-
-        response = StreamingHttpResponse(
-            order_event_stream(user_order_event_groups(request.user)),
-            content_type='text/event-stream',
-        )
-        response['Cache-Control'] = 'no-cache, no-transform'
-        response['X-Accel-Buffering'] = 'no'
-        return response
 
 
 class WasherAnalyticsView(APIView):
@@ -264,128 +235,6 @@ class RequestedOrdersListView(generics.ListAPIView):
             rider__isnull=True
         ).select_related('user', 'service', 'service_location').prefetch_related('services').order_by('-created_at')
 
-
-class AssignOrderWasherView(APIView):
-    """Assign an in-progress order to a washer and notify them."""
-    permission_classes = [permissions.IsAuthenticated]
-
-    def post(self, request, *args, **kwargs):
-        user = request.user
-        if not (
-            user.is_superuser
-            or user.role == 'admin'
-            or (
-                user.is_location_admin
-                and user.service_location_id
-            )
-        ):
-            return Response(
-                {'error': 'Only administrators can assign washers'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-
-        try:
-            order_id = int(request.data.get('order_id'))
-            washer_id = int(request.data.get('washer_id'))
-        except (TypeError, ValueError):
-            return Response(
-                {'error': 'Valid order_id and washer_id are required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        try:
-            from users.models import User
-            washer = User.objects.get(
-                id=washer_id,
-                is_active=True
-            )
-        except User.DoesNotExist:
-            return Response({'error': 'Active washer not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        if washer.role != 'washer' and washer.staff_type != 'washer':
-            return Response({'error': 'Selected user is not a washer'}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            with transaction.atomic():
-                order = Order.objects.select_for_update().select_related('washer').get(id=order_id)
-
-                is_global_admin = user.is_superuser or user.role == 'admin'
-                if not is_global_admin and user.service_location_id != order.service_location_id:
-                    return Response(
-                        {'error': 'You can only assign washers to orders at your location'},
-                        status=status.HTTP_403_FORBIDDEN
-                    )
-
-                if not order.service_location_id or washer.service_location_id != order.service_location_id:
-                    return Response(
-                        {'error': 'Washer must be assigned to the order location'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-
-                if order.status != 'in_progress':
-                    return Response(
-                        {'error': 'Only in-progress orders can be assigned to a washer'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-
-                if order.washer_id == washer.id:
-                    return Response({
-                        'message': 'Washer is already assigned to this order',
-                        'washer': self._washer_data(washer),
-                    })
-
-                order.washer = washer
-                order.save(update_fields=['washer'])
-
-                from notifications.models import Notification
-                message = f'Order {order.code} has been assigned to you for washing.'
-                Notification.objects.create(
-                    user=washer,
-                    order=order,
-                    message=message,
-                    notification_type='order_assigned'
-                )
-        except Order.DoesNotExist:
-            return Response({'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        sms_sent = False
-        sms_message = 'Washer has no phone number; SMS was not sent.'
-        if washer.phone and washer.phone.strip():
-            try:
-                from services.sms_service import AfricasTalkingSMSService
-                sms_result = AfricasTalkingSMSService().send_sms(
-                    phone_number=washer.phone,
-                    message=f'WildWash: Order {order.code} has been assigned to you for washing. View your dashboard at https://www.wildwash.co.ke/staff/washer',
-                )
-                sms_sent = sms_result.get('status') == 'success'
-                if sms_sent:
-                    sms_message = 'Assignment SMS sent.'
-                else:
-                    sms_message = 'Washer assigned, but SMS could not be sent.'
-                    logger.error('SMS sending failed for washer %s, order %s: %s', washer.id, order.code, sms_result)
-            except Exception:
-                sms_message = 'Washer assigned, but SMS could not be sent.'
-                logger.exception('SMS sending failed for washer %s, order %s', washer.id, order.code)
-        else:
-            logger.warning('Washer %s has no phone number; assignment SMS was not sent', washer.id)
-
-        return Response({
-            'message': 'Washer assigned successfully',
-            'sms_sent': sms_sent,
-            'sms_message': sms_message,
-            'washer': self._washer_data(washer),
-        })
-
-    @staticmethod
-    def _washer_data(washer):
-        return {
-            'id': washer.id,
-            'username': washer.username,
-            'first_name': washer.first_name,
-            'last_name': washer.last_name,
-        }
-
-
 class RiderOrderListView(generics.ListAPIView):
     """
     GET -> List orders assigned to the authenticated rider
@@ -397,19 +246,6 @@ class RiderOrderListView(generics.ListAPIView):
     serializer_class = OrderListSerializer
     permission_classes = [permissions.IsAuthenticated]
 
-    class RiderOrderPagination(PageNumberPagination):
-        page_size = 50
-        page_size_query_param = 'page_size'
-        max_page_size = 100
-
-    pagination_class = RiderOrderPagination
-
-    def get_serializer_class(self):
-        if self.request.query_params.get('compact') == '1':
-            from .serializers import RiderOrderCompactSerializer
-            return RiderOrderCompactSerializer
-        return self.serializer_class
-
     def get_queryset(self):
         """
         Get orders based on user's staff type
@@ -417,17 +253,17 @@ class RiderOrderListView(generics.ListAPIView):
         user = self.request.user
         excluded_services = ['Cleaning', 'fumigation', 'cctv installation', 'shower installation']
         
-        # Washers only see active work assigned specifically to their account.
-        if user.staff_type == 'washer' or user.role == 'washer':
+        # For washers: show in_progress orders
+        if hasattr(user, 'staff_type') and user.staff_type == 'washer':
             queryset = Order.objects.filter(
                 service_location=user.service_location,
                 status='in_progress',
-                washer=user
+                washer__isnull=True  # Not yet assigned to a washer
             ).exclude(
                 services__name__in=excluded_services
-            ).distinct().select_related('user', 'service', 'rider', 'washer', 'service_location').prefetch_related('services').order_by('-created_at')
+            ).distinct().select_related('user', 'service', 'rider', 'service_location').prefetch_related('services').order_by('-created_at')
             
-            print(f"\n[DEBUG WasherOrders] Washer {user.username} (ID: {user.id}) querying assigned in_progress orders")
+            print(f"\n[DEBUG WasherOrders] Washer {user.username} (ID: {user.id}) querying in_progress orders")
             print(f"[DEBUG] Total in_progress orders: {queryset.count()}")
         
         # For folders: show washed orders
@@ -454,16 +290,12 @@ class RiderOrderListView(generics.ListAPIView):
                 status__in=['requested', 'assigned_pickup', 'picked', 'in_progress', 'washed', 'folded', 'ready', 'assigned_delivery', 'delivered']
             ).exclude(
                 services__name__in=excluded_services
-            ).distinct().select_related(
-                'user', 'service', 'rider', 'pickup_rider', 'delivery_rider', 'service_location'
-            ).order_by('-created_at')
-            if self.request.query_params.get('compact') != '1':
-                queryset = queryset.prefetch_related('services')
+            ).distinct().select_related('user', 'service', 'rider', 'pickup_rider', 'delivery_rider', 'service_location').prefetch_related('services').order_by('-created_at')
+            
+            print(f"\n[DEBUG RiderOrders] Rider {user.username} (ID: {user.id}) querying orders")
+            print(f"[DEBUG] Total orders assigned to this rider: {queryset.count()}")
+            print(f"[DEBUG] Checking rider={user}, pickup_rider={user}, delivery_rider={user}")
         
-        order_code = self.request.query_params.get('code')
-        if order_code:
-            queryset = queryset.filter(code=order_code)
-
         return queryset
 
     def post(self, request, *args, **kwargs):
@@ -540,13 +372,6 @@ class OrderUpdateView(APIView):
                 return Response({'error': 'Order ID is required'}, status=status.HTTP_400_BAD_REQUEST)
 
             order = Order.objects.get(id=order_id)
-
-            is_washer = request.user.role == 'washer' or request.user.staff_type == 'washer'
-            if is_washer and order.washer_id != request.user.id:
-                return Response(
-                    {'error': 'You can only update orders assigned to you'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
             
             # Check if the staff member has permission for this location
             # Allow: superusers, or staff with matching service_location, or any staff with washer/folder role
@@ -1258,7 +1083,7 @@ class OrderListCreateView(generics.ListCreateAPIView):
             'description', 'washer_notes', 'folder_notes', 'fumigator_notes'
         ).select_related(
             'user', 'service', 'rider', 'service_location', 
-            'pickup_rider', 'delivery_rider', 'created_by', 'washer'
+            'pickup_rider', 'delivery_rider', 'created_by'
         )
 
         # Role-specific staff accounts may not have Django's is_staff flag set.
@@ -1279,8 +1104,6 @@ class OrderListCreateView(generics.ListCreateAPIView):
             else:
                 print(f"[DEBUG Orders] ⚠️ Staff has no service_location assigned, returning no orders")
                 return Order.objects.none()
-        if user.is_authenticated and (user.role == 'washer' or user.staff_type == 'washer'):
-            queryset = queryset.filter(washer=user)
         # For regular users, show only their orders
         elif user.is_authenticated and not is_location_staff:
             queryset = queryset.filter(user=user)
@@ -1638,6 +1461,43 @@ class OrderListCreateView(generics.ListCreateAPIView):
         return ctx
 
 
+class OrderReviewView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_order(self, request, code):
+        return Order.objects.get(code=code, user=request.user)
+
+    def get(self, request, code):
+        try:
+            order = self.get_order(request, code)
+        except Order.DoesNotExist:
+            return Response({'detail': 'Order not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if order.status != 'delivered':
+            return Response({'detail': 'You can review an order after it is delivered.'}, status=status.HTTP_400_BAD_REQUEST)
+        review = OrderReview.objects.filter(order=order).first()
+        return Response(OrderReviewSerializer(review).data if review else None)
+
+    def post(self, request, code):
+        try:
+            order = self.get_order(request, code)
+        except Order.DoesNotExist:
+            return Response({'detail': 'Order not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if order.status != 'delivered':
+            return Response({'detail': 'You can review an order after it is delivered.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        review = OrderReview.objects.filter(order=order).first()
+        serializer = OrderReviewSerializer(
+            instance=review,
+            data={
+                'rating': request.data.get('rating'),
+                'feedback': request.data.get('feedback', '').strip(),
+            },
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save(order=order, customer=request.user)
+        return Response(serializer.data)
+
+
 class OrderPaymentStatusView(APIView):
     """
     GET -> Get payment status for an order
@@ -1687,55 +1547,6 @@ class OrderPaymentStatusView(APIView):
                 {'detail': 'Order not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
-
-
-class OrderRatingView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get_order(self, request, code):
-        try:
-            order = Order.objects.get(code__iexact=code)
-        except Order.DoesNotExist:
-            return None, Response({'detail': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        if order.user_id != request.user.id:
-            return None, Response(
-                {'detail': 'You do not have permission to rate this order'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        if order.status != 'delivered':
-            return None, Response(
-                {'detail': 'You can rate an order after it has been delivered'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        return order, None
-
-    def get(self, request, code, *args, **kwargs):
-        order, error_response = self.get_order(request, code)
-        if error_response:
-            return error_response
-        try:
-            rating = order.rating
-        except OrderRating.DoesNotExist:
-            rating = None
-        return Response(OrderRatingSerializer(rating).data if rating else None)
-
-    def post(self, request, code, *args, **kwargs):
-        order, error_response = self.get_order(request, code)
-        if error_response:
-            return error_response
-
-        serializer = OrderRatingSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        rating, _created = OrderRating.objects.update_or_create(
-            order=order,
-            defaults={
-                'customer': request.user,
-                'rating': serializer.validated_data['rating'],
-                'comment': serializer.validated_data.get('comment', ''),
-            },
-        )
-        return Response(OrderRatingSerializer(rating).data, status=status.HTTP_200_OK)
 
 
 class RequestDeliveryView(APIView):

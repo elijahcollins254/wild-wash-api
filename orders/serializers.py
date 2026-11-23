@@ -1,7 +1,7 @@
 # orders/serializers.py
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Order, OrderItem, OrderRating
+from .models import Order, OrderItem, OrderReview
 from services.models import Service
 from users.models import Location
 from decimal import Decimal
@@ -9,30 +9,16 @@ from decimal import Decimal
 User = get_user_model()
 
 
-class OrderRatingSerializer(serializers.ModelSerializer):
+class OrderReviewSerializer(serializers.ModelSerializer):
     class Meta:
-        model = OrderRating
-        fields = ['rating', 'comment', 'created_at']
-        read_only_fields = ['created_at']
+        model = OrderReview
+        fields = ['rating', 'feedback', 'created_at', 'updated_at']
+        read_only_fields = ['created_at', 'updated_at']
 
     def validate_rating(self, value):
-        if not 1 <= value <= 5:
+        if value < 1 or value > 5:
             raise serializers.ValidationError('Rating must be between 1 and 5.')
         return value
-
-
-def get_order_service_total(order):
-    """Calculate the catalog total using stored order-item quantities."""
-    order_items = order.order_items.select_related('service').all()
-    if order_items.exists():
-        return sum(
-            (item.service.price * item.quantity for item in order_items),
-            Decimal('0'),
-        )
-    return sum(
-        (service.price for service in order.services.all()),
-        Decimal('0'),
-    )
 
 
 class OrderListLightSerializer(serializers.ModelSerializer):
@@ -45,14 +31,8 @@ class OrderListLightSerializer(serializers.ModelSerializer):
     service_name = serializers.CharField(source="service.name", read_only=True, allow_null=True)
     user_name = serializers.SerializerMethodField()
     rider_name = serializers.SerializerMethodField()
-    washer = serializers.SerializerMethodField()
     user = serializers.SerializerMethodField()
     service_location = serializers.SerializerMethodField()
-    pickup_location = serializers.SerializerMethodField()
-    dropoff_location = serializers.SerializerMethodField()
-    rider = serializers.SerializerMethodField()
-    pickup_rider = serializers.SerializerMethodField()
-    delivery_rider = serializers.SerializerMethodField()
     
     def get_user_name(self, obj):
         if not obj.user:
@@ -65,21 +45,9 @@ class OrderListLightSerializer(serializers.ModelSerializer):
             return "Unassigned"
         return f"{rider.first_name} {rider.last_name}".strip() or rider.username
 
-    def get_washer(self, obj):
-        if not obj.washer:
-            return None
-        return {
-            "id": obj.washer_id,
-            "username": obj.washer.username,
-            "first_name": obj.washer.first_name,
-            "last_name": obj.washer.last_name,
-        }
-
     def get_user(self, obj):
         if not obj.user:
             return None
-        user_pickup_latitude = getattr(obj.user, "pickup_latitude", None)
-        user_pickup_longitude = getattr(obj.user, "pickup_longitude", None)
         return {
             "id": obj.user_id,
             "username": obj.user.username,
@@ -87,8 +55,6 @@ class OrderListLightSerializer(serializers.ModelSerializer):
             "last_name": obj.user.last_name,
             "phone": obj.user.phone,
             "location": obj.user.location,
-            "pickup_latitude": float(user_pickup_latitude) if user_pickup_latitude is not None else None,
-            "pickup_longitude": float(user_pickup_longitude) if user_pickup_longitude is not None else None,
         }
 
     def get_service_location(self, obj):
@@ -99,84 +65,13 @@ class OrderListLightSerializer(serializers.ModelSerializer):
             "name": obj.service_location.name,
             "region": obj.service_location.region,
         }
-
-    def get_pickup_location(self, obj):
-        latitude = obj.pickup_latitude if obj.pickup_latitude is not None else getattr(obj.user, "pickup_latitude", None)
-        longitude = obj.pickup_longitude if obj.pickup_longitude is not None else getattr(obj.user, "pickup_longitude", None)
-        if latitude is None or longitude is None:
-            return None
-        return {
-            "lat": float(latitude),
-            "lng": float(longitude),
-        }
-
-    def get_dropoff_location(self, obj):
-        latitude = getattr(obj.user, "latitude", None) if obj.user else None
-        longitude = getattr(obj.user, "longitude", None) if obj.user else None
-        if latitude is None or longitude is None:
-            return None
-        return {
-            "lat": float(latitude),
-            "lng": float(longitude),
-        }
-
-    @staticmethod
-    def _rider_data(rider):
-        if not rider:
-            return None
-        return {
-            "id": rider.id,
-            "username": rider.username,
-            "first_name": rider.first_name,
-            "last_name": rider.last_name,
-        }
-
-    def get_rider(self, obj):
-        return self._rider_data(obj.rider)
-
-    def get_pickup_rider(self, obj):
-        return self._rider_data(obj.pickup_rider)
-
-    def get_delivery_rider(self, obj):
-        return self._rider_data(obj.delivery_rider)
     
     class Meta:
         model = Order
         fields = [
-            "id", "code", "status", "created_at", "customer_name", "service_name", "package",
-            "user_name", "user", "rider_name", "rider", "pickup_rider", "delivery_rider",
-            "service_location", "price", "actual_price", "is_paid", "order_type",
-            "pickup_location", "dropoff_location", "pickup_address", "dropoff_address",
-            "urgency", "items", "weight_kg", "estimated_delivery", "delivered_at",
-            "picked_at", "ready_at", "quantity", "description"
-        ]
-
-
-class RiderOrderCompactSerializer(OrderListLightSerializer):
-    def get_user(self, obj):
-        if not obj.user:
-            return None
-        user_pickup_latitude = getattr(obj.user, "pickup_latitude", None)
-        user_pickup_longitude = getattr(obj.user, "pickup_longitude", None)
-        return {
-            "id": obj.user_id,
-            "username": obj.user.username,
-            "first_name": obj.user.first_name,
-            "last_name": obj.user.last_name,
-            "phone": obj.user.phone,
-            "location": obj.user.location,
-            "pickup_latitude": float(user_pickup_latitude) if user_pickup_latitude is not None else None,
-            "pickup_longitude": float(user_pickup_longitude) if user_pickup_longitude is not None else None,
-        }
-
-    class Meta(OrderListLightSerializer.Meta):
-        fields = [
-            "id", "code", "status", "created_at", "customer_name", "service_name", "package",
-            "user_name", "user", "rider_name", "rider", "pickup_rider", "delivery_rider",
-            "service_location", "price", "actual_price", "order_type",
-            "pickup_location", "dropoff_location", "pickup_address", "dropoff_address",
-            "urgency", "items", "weight_kg", "estimated_delivery", "delivered_at",
-            "picked_at", "ready_at", "quantity", "description"
+            "id", "code", "status", "created_at", "customer_name", "service_name",
+            "user_name", "user", "rider_name", "service_location", "price",
+            "actual_price", "is_paid", "order_type"
         ]
 
 
@@ -389,19 +284,13 @@ class OrderCreateSerializer(serializers.ModelSerializer):
                         service=service,
                         defaults={'quantity': 1}
                     )
-
-            # Keep the legacy order-level count consistent with service quantities.
-            item_count = sum(order.order_items.values_list('quantity', flat=True))
-            if item_count and order.items != item_count:
-                order.items = item_count
-                order.save(update_fields=['items'])
         
         return order
 
     def get_total_price(self, obj):
-        """Return the quoted estimate, or a quantity-weighted catalog total."""
-        total = obj.price if obj.price is not None else get_order_service_total(obj)
-        return float(total) if total is not None else 0
+        """Calculate total price from all services"""
+        total = sum(service.price for service in obj.services.all())
+        return float(total) if total else 0
 
 
 class OrderItemSerializer(serializers.ModelSerializer):
@@ -463,16 +352,12 @@ class OrderListSerializer(serializers.ModelSerializer):
     def get_user(self, obj):
         if not obj.user:
             return None
-        user_pickup_latitude = getattr(obj.user, 'pickup_latitude', None)
-        user_pickup_longitude = getattr(obj.user, 'pickup_longitude', None)
         return {
             'username': obj.user.username,
             'phone': obj.user.phone,
             'location': obj.user.location,
             'first_name': obj.user.first_name,
             'last_name': obj.user.last_name,
-            'pickup_latitude': float(user_pickup_latitude) if user_pickup_latitude is not None else None,
-            'pickup_longitude': float(user_pickup_longitude) if user_pickup_longitude is not None else None,
         }
 
     def get_service_location(self, obj):
@@ -580,17 +465,17 @@ class OrderListSerializer(serializers.ModelSerializer):
         return out
 
     def get_total_price(self, obj):
-        """Return the stored quote or calculate a quantity-weighted estimate."""
-        total = obj.price if obj.price is not None else get_order_service_total(obj)
-        return float(total) if total is not None else None
+        """Calculate total price from all services"""
+        total = sum(service.price for service in obj.services.all())
+        return float(total) if total else None
 
     def get_package(self, obj):
         return getattr(obj.service, "name", f"Package {obj.package}") if obj.service else f"Package {obj.package}"
 
     def get_price_display(self, obj):
-        # The stored price is the customer quote and includes delivery speed.
-        total = obj.price if obj.price is not None else get_order_service_total(obj)
-        if total is not None:
+        # Use total price from services if available
+        total = sum(service.price for service in obj.services.all())
+        if total:
             try:
                 p = Decimal(str(total))
                 if p == p.to_integral():
@@ -618,13 +503,11 @@ class OrderListSerializer(serializers.ModelSerializer):
         return None
 
     def get_pickup_location(self, obj):
-        """Return the order's saved pickup coordinates, or the customer's saved default pickup pin."""
-        latitude = obj.pickup_latitude if obj.pickup_latitude is not None else getattr(obj.user, 'pickup_latitude', None)
-        longitude = obj.pickup_longitude if obj.pickup_longitude is not None else getattr(obj.user, 'pickup_longitude', None)
-        if latitude is not None and longitude is not None:
+        """Return pickup location coordinates if available from service_location"""
+        if obj.service_location and hasattr(obj.service_location, 'latitude') and hasattr(obj.service_location, 'longitude'):
             return {
-                'lat': float(latitude),
-                'lng': float(longitude),
+                'lat': float(obj.service_location.latitude) if obj.service_location.latitude else None,
+                'lng': float(obj.service_location.longitude) if obj.service_location.longitude else None
             }
         return None
 

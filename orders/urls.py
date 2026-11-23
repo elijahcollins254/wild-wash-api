@@ -2,31 +2,27 @@
 
 from django.urls import path
 from .views import (
-    OrderEventsView,
     OrderListCreateView, 
     OrderUpdateView, 
     RiderOrderListView,
     RequestedOrdersListView,
-    AssignOrderWasherView,
     StaffCreateOrderView,
     OrderPaymentStatusView,
-    OrderRatingView,
+    OrderReviewView,
     RequestDeliveryView,
     AssignOrderLocationView,
     WasherAnalyticsView,
 )
 
 urlpatterns = [
-    path('events/', OrderEventsView.as_view(), name='order-events'),
     path('', OrderListCreateView.as_view(), name='order-list'),
     path('washer-analytics/', WasherAnalyticsView.as_view(), name='washer-analytics'),
     path('assign-location/', AssignOrderLocationView.as_view(), name='order-assign-location'),
-    path('assign-washer/', AssignOrderWasherView.as_view(), name='order-assign-washer'),
     path('update/', OrderUpdateView.as_view(), name='order-update'),
     path('rider/', RiderOrderListView.as_view(), name='rider-order-list'),
     path('requested/', RequestedOrdersListView.as_view(), name='requested-orders-list'),
     path('create/', StaffCreateOrderView.as_view(), name='staff-create-order'),
     path('<str:code>/payment-status/', OrderPaymentStatusView.as_view(), name='order-payment-status'),
-    path('<str:code>/rating/', OrderRatingView.as_view(), name='order-rating'),
+    path('<str:code>/review/', OrderReviewView.as_view(), name='order-review'),
     path('<str:code>/request-delivery/', RequestDeliveryView.as_view(), name='request-delivery'),
 ]
