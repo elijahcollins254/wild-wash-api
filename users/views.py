@@ -1,3 +1,4 @@
+from channels.layers import get_channel_layer
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -8,7 +9,7 @@ from rest_framework.authentication import TokenAuthentication
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.conf import settings
-from django.http import JsonResponse
+from django.http import JsonResponse, StreamingHttpResponse
 from google.auth import exceptions as google_auth_exceptions
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2 import id_token as google_id_token
@@ -20,6 +21,7 @@ from .serializers import (
 from .models import Location, ActivityLog
 from .serializers import DataDeletionRequestSerializer
 from .permissions import LocationBasedPermission
+from .events import trusted_user_count_stream
 
 from http.client import HTTPException
 
@@ -339,6 +341,32 @@ class RegisterView(APIView):
             user = serializer.save()
             return Response(UserSerializer(user).data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class PublicUserCountView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        return Response({'count': User.objects.count()})
+
+
+class PublicUserCountEventsView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        if get_channel_layer() is None:
+            return Response(
+                {'detail': 'Live user count updates are temporarily unavailable.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        response = StreamingHttpResponse(
+            trusted_user_count_stream(),
+            content_type='text/event-stream',
+        )
+        response['Cache-Control'] = 'no-cache, no-transform'
+        response['X-Accel-Buffering'] = 'no'
+        return response
 
 
 class LocationViewSet(viewsets.ModelViewSet):

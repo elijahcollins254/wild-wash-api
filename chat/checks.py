@@ -8,7 +8,7 @@ def check_support_chat_channel_layer(app_configs, **kwargs):
         return []
     return [
         Warning(
-            'Support chat is using an in-memory channel layer.',
+            'Live chat and order events are using an in-memory channel layer.',
             hint='Set CHANNEL_REDIS_URL to a shared Redis service for production or multi-process deployments.',
             id='chat.W001',
         ),

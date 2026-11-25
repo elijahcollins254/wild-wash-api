@@ -7,6 +7,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     UserViewSet, LoginView, ChangePasswordView, 
     get_csrf, RegisterView, UserProfileView, ProfileSetupView,
+    PublicUserCountView, PublicUserCountEventsView,
     LocationViewSet, StaffViewSet, StaffLoginView, AdminLoginView,
     RequestPasswordResetView, VerifyPasswordResetCodeView, ConfirmPasswordResetView,
     ActivityLogViewSet, DataDeletionRequestView, MobileGoogleAuthView
@@ -20,6 +21,8 @@ router.register(r'staff', StaffViewSet, basename='staff')
 urlpatterns = [
     path('me/', UserProfileView.as_view(), name='user-profile'),
     path('profile/setup/', ProfileSetupView.as_view(), name='profile-setup'),
+    path('count/', PublicUserCountView.as_view(), name='public-user-count'),
+    path('count/events/', PublicUserCountEventsView.as_view(), name='public-user-count-events'),
     path('', include(router.urls)),
     path('register/', RegisterView.as_view(), name='register'),
     path('deletion-requests/', DataDeletionRequestView.as_view(), name='deletion-request-create'),

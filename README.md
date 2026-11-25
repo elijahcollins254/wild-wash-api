@@ -102,11 +102,13 @@ Your Django application is now available at `http://localhost:8000`.
 ## Live support chat
 
 The support chat sends customer messages with the existing HTTP API and streams
-support replies over Server-Sent Events. The API is served by Daphne through the
+support replies over Server-Sent Events. Order dashboards also use Server-Sent
+Events to refresh when an order changes. The API is served by Daphne through the
 repository `Procfile`. Configure `CHANNEL_REDIS_URL` with a shared Redis
-connection in deployed environments so replies reach chat connections across
-web processes and instances. Without it, Django uses an in-memory channel layer,
-which is suitable only for local, single-process development.
+connection in deployed environments so chat replies and order updates reach
+connections across web processes and instances. Without it, Django uses an
+in-memory channel layer, which is suitable only for local, single-process
+development.
 
 ## Unique user phone numbers
 

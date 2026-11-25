@@ -12,10 +12,12 @@ from .views import (
     RequestDeliveryView,
     AssignOrderLocationView,
     WasherAnalyticsView,
+    OrderEventsView,
 )
 
 urlpatterns = [
     path('', OrderListCreateView.as_view(), name='order-list'),
+    path('events/', OrderEventsView.as_view(), name='order-events'),
     path('washer-analytics/', WasherAnalyticsView.as_view(), name='washer-analytics'),
     path('assign-location/', AssignOrderLocationView.as_view(), name='order-assign-location'),
     path('update/', OrderUpdateView.as_view(), name='order-update'),

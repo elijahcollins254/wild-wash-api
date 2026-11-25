@@ -1,13 +1,33 @@
 # orders/views.py
 from django.db import models
 from django.db.models import Prefetch
+from django.http import StreamingHttpResponse
+from django.utils.dateparse import parse_date
 from rest_framework import generics, permissions, status
+from rest_framework.authentication import SessionAuthentication, TokenAuthentication
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from .models import Order, OrderReview
 from .serializers import OrderListSerializer, OrderCreateSerializer, OrderReviewSerializer
+from .events import order_event_stream, user_order_event_groups
 from users.permissions import LocationBasedPermission
 from users.models import Location
+
+
+class OrderEventsView(APIView):
+    """Stream order-change notifications to the authenticated user."""
+    authentication_classes = [TokenAuthentication, SessionAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        response = StreamingHttpResponse(
+            order_event_stream(user_order_event_groups(request.user)),
+            content_type='text/event-stream',
+        )
+        response['Cache-Control'] = 'no-cache'
+        response['X-Accel-Buffering'] = 'no'
+        return response
 
 
 class WasherAnalyticsView(APIView):
@@ -1148,6 +1168,29 @@ class OrderListCreateView(generics.ListCreateAPIView):
                 models.Q(user__first_name__icontains=search_term) |
                 models.Q(user__last_name__icontains=search_term)
             )
+
+        date_from_value = self.request.query_params.get("date_from")
+        date_to_value = self.request.query_params.get("date_to")
+        try:
+            date_from = parse_date(date_from_value) if date_from_value else None
+        except ValueError:
+            date_from = None
+        if date_from_value and date_from is None:
+            raise ValidationError({"date_from": "Date must use YYYY-MM-DD format."})
+
+        try:
+            date_to = parse_date(date_to_value) if date_to_value else None
+        except ValueError:
+            date_to = None
+        if date_to_value and date_to is None:
+            raise ValidationError({"date_to": "Date must use YYYY-MM-DD format."})
+        if date_from and date_to and date_from > date_to:
+            raise ValidationError({"date_to": "End date must be on or after the start date."})
+
+        if date_from:
+            queryset = queryset.filter(created_at__date__gte=date_from)
+        if date_to:
+            queryset = queryset.filter(created_at__date__lte=date_to)
         
         return queryset
 

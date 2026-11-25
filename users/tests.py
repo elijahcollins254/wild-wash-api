@@ -1,3 +1,5 @@
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from typing import Any, cast
@@ -8,9 +10,48 @@ from rest_framework.reverse import reverse
 from django.test import override_settings
 
 from .models import DataDeletionRequest
+from .events import USER_COUNT_GROUP
 
 
 User = get_user_model()
+
+
+class PublicUserCountApiTests(APITestCase):
+	def test_public_count_returns_the_backend_user_count(self):
+		User.objects.create_user(username='trusted_count_user', password='StrongPass123')
+
+		response = self.client.get('/users/count/')
+
+		self.assertEqual(response.status_code, status.HTTP_200_OK)
+		self.assertEqual(response.data['count'], User.objects.count())
+
+	def test_count_events_endpoint_returns_a_public_sse_stream(self):
+		response = self.client.get('/users/count/events/')
+
+		self.assertEqual(response.status_code, status.HTTP_200_OK)
+		self.assertEqual(response['Content-Type'], 'text/event-stream')
+		self.assertEqual(response['Cache-Control'], 'no-cache, no-transform')
+		self.assertEqual(response['X-Accel-Buffering'], 'no')
+		response.close()
+
+	def test_new_user_creation_broadcasts_an_updated_count(self):
+		channel_layer = get_channel_layer()
+		channel_name = async_to_sync(channel_layer.new_channel)('test-user-count')
+		async_to_sync(channel_layer.group_add)(USER_COUNT_GROUP, channel_name)
+
+		try:
+			with self.captureOnCommitCallbacks(execute=True):
+				User.objects.create_user(
+					username='trusted_count_signup',
+					password='StrongPass123',
+				)
+
+			event = async_to_sync(channel_layer.receive)(channel_name)
+
+			self.assertEqual(event['type'], 'users.count_changed')
+			self.assertEqual(event['user_count'], User.objects.count())
+		finally:
+			async_to_sync(channel_layer.group_discard)(USER_COUNT_GROUP, channel_name)
 
 
 class DataDeletionRequestApiTests(APITestCase):

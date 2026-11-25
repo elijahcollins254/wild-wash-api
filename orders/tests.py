@@ -1,8 +1,10 @@
+from datetime import datetime, timedelta
 from unittest import TestCase
 from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase as DjangoTestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from .models import Order, OrderReview
@@ -65,6 +67,90 @@ class StaffOrderListTest(TestCase):
 		self.assertEqual(response.status_code, 200)
 		self.assertEqual(response.data['count'], 1)
 		self.assertEqual(response.data['results'][0]['id'], local_order.id)
+
+
+class StaffOrderDateFilterTest(DjangoTestCase):
+	def setUp(self):
+		suffix = uuid4().hex
+		self.location = Location.objects.create(name=f'Date filter location {suffix}')
+		customer = User.objects.create_user(username=f'date_customer_{suffix}', password='testpass123')
+		washer = User.objects.create_user(
+			username=f'date_washer_{suffix}',
+			password='testpass123',
+			role='washer',
+			service_location=self.location,
+			is_staff=False,
+		)
+		self.client = APIClient()
+		self.client.force_authenticate(user=washer)
+
+		today = timezone.localdate()
+		self.date_from = today - timedelta(days=3)
+		self.date_to = today - timedelta(days=1)
+		self.in_range_order_ids = []
+		order_dates = [
+			(self.date_from - timedelta(days=1), False),
+			(self.date_from, True),
+			(self.date_to, True),
+			(today, False),
+		]
+
+		for order_date, in_range in order_dates:
+			order = Order.objects.create(
+				code=f'WW-DATE-{uuid4().hex[:16]}',
+				user=customer,
+				service_location=self.location,
+				pickup_address='Date filter pickup',
+				dropoff_address='Date filter dropoff',
+			)
+			created_at = timezone.make_aware(datetime.combine(order_date, datetime.min.time()))
+			Order.objects.filter(pk=order.pk).update(created_at=created_at)
+			if in_range:
+				self.in_range_order_ids.append(order.id)
+
+	def test_filters_orders_inclusive_of_both_dates(self):
+		response = self.client.get('/orders/', {
+			'date_from': self.date_from.isoformat(),
+			'date_to': self.date_to.isoformat(),
+		})
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(
+			{order['id'] for order in response.data['results']},
+			set(self.in_range_order_ids),
+		)
+		self.assertEqual(response.data['count'], len(self.in_range_order_ids))
+
+	def test_rejects_invalid_date_filter(self):
+		response = self.client.get('/orders/', {'date_from': 'not-a-date'})
+
+		self.assertEqual(response.status_code, 400)
+
+
+class OrderEventsEndpointTest(DjangoTestCase):
+	def test_requires_authentication(self):
+		response = self.client.get('/orders/events/')
+
+		self.assertEqual(response.status_code, 401)
+
+	def test_authenticated_user_receives_event_stream(self):
+		user = User.objects.create_user(
+			username=f'events_admin_{uuid4().hex}',
+			password='testpass123',
+			is_staff=True,
+			is_superuser=True,
+		)
+		client = APIClient()
+		client.force_authenticate(user=user)
+
+		response = client.get('/orders/events/')
+
+		self.assertEqual(response.status_code, 200)
+		self.assertTrue(response.streaming)
+		self.assertEqual(response['Content-Type'], 'text/event-stream')
+		self.assertEqual(response['Cache-Control'], 'no-cache')
+		self.assertEqual(response['X-Accel-Buffering'], 'no')
+		response.close()
 
 
 class OrderLaundryAssignmentTests(TestCase):
