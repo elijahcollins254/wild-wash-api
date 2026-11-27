@@ -8,17 +8,20 @@ from rest_framework.authtoken.models import Token
 from rest_framework.authentication import TokenAuthentication
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
+from django.db import transaction
 from django.conf import settings
 from django.http import JsonResponse, StreamingHttpResponse
+from django.utils import timezone
 from google.auth import exceptions as google_auth_exceptions
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2 import id_token as google_id_token
 
 from .serializers import (
     UserSerializer, UserCreateSerializer, ChangePasswordSerializer,
-    LocationSerializer, StaffCreateSerializer, ActivityLogSerializer
+    LocationSerializer, StaffCreateSerializer, ActivityLogSerializer,
+    PartnerApplicationSerializer
 )
-from .models import Location, ActivityLog
+from .models import Location, ActivityLog, PartnerApplication
 from .serializers import DataDeletionRequestSerializer
 from .permissions import LocationBasedPermission
 from .events import trusted_user_count_stream
@@ -82,6 +85,12 @@ class UserProfileView(APIView):
 
     def patch(self, request):
         """Update the current user's profile"""
+        protected_fields = {"role", "staff_type", "is_staff", "is_superuser"}
+        if protected_fields.intersection(request.data.keys()):
+            return Response(
+                {"detail": "Staff roles and access can only be changed by an administrator."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         serializer = self.serializer_class(request.user, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
@@ -164,6 +173,8 @@ class UserViewSet(viewsets.ModelViewSet):
             return [permissions.AllowAny()]
         if self.action == 'destroy':
             return [permissions.IsAdminUser()]
+        if self.action in ['update', 'partial_update']:
+            return [permissions.IsAdminUser()]
         return super().get_permissions()
 
     def get_serializer_class(self):
@@ -202,6 +213,84 @@ class UserViewSet(viewsets.ModelViewSet):
             )
         
         return response
+
+
+class PartnerApplicationViewSet(viewsets.ModelViewSet):
+    serializer_class = PartnerApplicationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ["get", "post", "head", "options"]
+
+    def get_queryset(self):
+        if self.request.user.is_staff or self.request.user.is_superuser:
+            return PartnerApplication.objects.select_related("user", "reviewed_by").all()
+        return PartnerApplication.objects.filter(user=self.request.user)
+
+    def get_permissions(self):
+        if self.action in ["approve", "reject"]:
+            return [permissions.IsAdminUser()]
+        return super().get_permissions()
+
+    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAdminUser])
+    @transaction.atomic
+    def approve(self, request, pk=None):
+        application = self.get_object()
+        if application.status != "pending":
+            return Response(
+                {"detail": f"Cannot approve an application with status {application.status}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        application = PartnerApplication.objects.select_for_update().get(pk=application.pk)
+        if application.status != "pending":
+            return Response(
+                {"detail": f"Cannot approve an application with status {application.status}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = application.user
+        for field in [
+            "first_name",
+            "last_name",
+            "phone",
+            "email",
+            "business_name",
+            "business_type",
+            "location",
+            "pickup_address",
+            "service_area",
+            "machine_count",
+            "pickup_latitude",
+            "pickup_longitude",
+        ]:
+            setattr(user, field, getattr(application, field))
+        user.role = "washer"
+        user.staff_type = "washer"
+        user.profile_complete = True
+        user.save()
+
+        application.status = "approved"
+        application.reviewed_by = request.user
+        application.reviewed_at = timezone.now()
+        application.reviewer_notes = str(request.data.get("notes", "")).strip()
+        application.save(update_fields=["status", "reviewed_by", "reviewed_at", "reviewer_notes", "updated_at"])
+        return Response(self.get_serializer(application).data)
+
+    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAdminUser])
+    @transaction.atomic
+    def reject(self, request, pk=None):
+        application = self.get_object()
+        if application.status != "pending":
+            return Response(
+                {"detail": f"Cannot reject an application with status {application.status}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        application.status = "rejected"
+        application.reviewed_by = request.user
+        application.reviewed_at = timezone.now()
+        application.reviewer_notes = str(request.data.get("notes", "")).strip()
+        application.save(update_fields=["status", "reviewed_by", "reviewed_at", "reviewer_notes", "updated_at"])
+        return Response(self.get_serializer(application).data)
 
 
 class LoginView(APIView):

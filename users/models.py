@@ -92,6 +92,9 @@ class User(AbstractUser):
     pickup_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     pickup_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     machine_count = models.PositiveIntegerField(default=0, help_text="Number of machines available at this washer's location")
+    business_name = models.CharField(max_length=150, blank=True, default="")
+    business_type = models.CharField(max_length=100, blank=True, default="")
+    service_area = models.TextField(blank=True, default="")
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="customer")
     staff_type = models.CharField(
         max_length=20,
@@ -116,6 +119,57 @@ class User(AbstractUser):
 
     def __str__(self):
         return f"{self.username} ({self.role})"
+
+
+class PartnerApplication(models.Model):
+    STATUS_CHOICES = (
+        ("pending", "Pending Review"),
+        ("approved", "Approved"),
+        ("rejected", "Rejected"),
+    )
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="partner_applications",
+    )
+    first_name = models.CharField(max_length=150)
+    last_name = models.CharField(max_length=150)
+    phone = models.CharField(max_length=20)
+    email = models.EmailField()
+    business_name = models.CharField(max_length=150)
+    business_type = models.CharField(max_length=100)
+    location = models.CharField(max_length=100)
+    pickup_address = models.TextField()
+    service_area = models.TextField()
+    machine_count = models.PositiveIntegerField(default=0)
+    pickup_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    pickup_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="pending")
+    reviewer_notes = models.TextField(blank=True, default="")
+    reviewed_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reviewed_partner_applications",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user"],
+                condition=models.Q(status__in=["pending", "approved"]),
+                name="unique_active_partner_application_per_user",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.business_name} - {self.user.username} ({self.status})"
 
 
 class PasswordResetCode(models.Model):

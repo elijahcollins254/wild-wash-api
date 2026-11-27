@@ -10,13 +10,15 @@ from .views import (
     PublicUserCountView, PublicUserCountEventsView,
     LocationViewSet, StaffViewSet, StaffLoginView, AdminLoginView,
     RequestPasswordResetView, VerifyPasswordResetCodeView, ConfirmPasswordResetView,
-    ActivityLogViewSet, DataDeletionRequestView, MobileGoogleAuthView
+    ActivityLogViewSet, DataDeletionRequestView, MobileGoogleAuthView,
+    PartnerApplicationViewSet
 )
 
 router = DefaultRouter()
 router.register(r'users', UserViewSet, basename='user')
 router.register(r'locations', LocationViewSet, basename='location')
 router.register(r'staff', StaffViewSet, basename='staff')
+router.register(r'partner-applications', PartnerApplicationViewSet, basename='partner-application')
 
 urlpatterns = [
     path('me/', UserProfileView.as_view(), name='user-profile'),

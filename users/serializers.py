@@ -3,7 +3,7 @@ import re
 
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
-from .models import DataDeletionRequest, Location, ActivityLog, format_phone_number
+from .models import DataDeletionRequest, Location, ActivityLog, PartnerApplication, format_phone_number
 
 User = get_user_model()
 
@@ -104,6 +104,9 @@ class UserSerializer(serializers.ModelSerializer):
             "pickup_latitude",
             "pickup_longitude",
             "machine_count",
+            "business_name",
+            "business_type",
+            "service_area",
             "email",
             "is_staff",
             "is_active",
@@ -126,6 +129,67 @@ class UserSerializer(serializers.ModelSerializer):
 
     def validate_phone(self, value):
         return _validate_unique_phone(value, self.instance)
+
+
+class PartnerApplicationSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source="user.username", read_only=True)
+
+    class Meta:
+        model = PartnerApplication
+        fields = [
+            "id",
+            "user",
+            "username",
+            "first_name",
+            "last_name",
+            "phone",
+            "email",
+            "business_name",
+            "business_type",
+            "location",
+            "pickup_address",
+            "service_area",
+            "machine_count",
+            "pickup_latitude",
+            "pickup_longitude",
+            "status",
+            "reviewer_notes",
+            "reviewed_at",
+            "created_at",
+        ]
+        read_only_fields = ["id", "user", "username", "status", "reviewer_notes", "reviewed_at", "created_at"]
+
+    def validate(self, attrs):
+        user = self.context["request"].user
+        if PartnerApplication.objects.filter(user=user, status__in=["pending", "approved"]).exists():
+            raise serializers.ValidationError(
+                "You already have a pending or approved partner application."
+            )
+        return attrs
+
+    def validate_phone(self, value):
+        return _validate_unique_phone(value, self.context["request"].user)
+
+    def validate_machine_count(self, value):
+        if value < 1:
+            raise serializers.ValidationError("At least one washing machine is required.")
+        return value
+
+    def validate_pickup_latitude(self, value):
+        if value is not None and not -90 <= value <= 90:
+            raise serializers.ValidationError("Latitude must be between -90 and 90.")
+        return value
+
+    def validate_pickup_longitude(self, value):
+        if value is not None and not -180 <= value <= 180:
+            raise serializers.ValidationError("Longitude must be between -180 and 180.")
+        return value
+
+    def create(self, validated_data):
+        return PartnerApplication.objects.create(
+            user=self.context["request"].user,
+            **validated_data,
+        )
 
 
 class UserCreateSerializer(serializers.ModelSerializer):

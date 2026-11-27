@@ -9,7 +9,7 @@ from rest_framework import status
 from rest_framework.reverse import reverse
 from django.test import override_settings
 
-from .models import DataDeletionRequest
+from .models import DataDeletionRequest, PartnerApplication
 from .events import USER_COUNT_GROUP
 
 
@@ -203,3 +203,130 @@ class UserProfilePatchTests(APITestCase):
 		self.assertIn('phone', response.data)
 		user.refresh_from_db()
 		self.assertIsNone(user.phone)
+
+	def test_profile_patch_cannot_grant_staff_role(self):
+		user = User.objects.create_user(username='partner_applicant', password='StrongPass123')
+		self.client.force_authenticate(user=user)
+
+		response = self.client.patch('/users/me/', {'role': 'washer', 'staff_type': 'washer'}, format='json')
+
+		self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+		user.refresh_from_db()
+		self.assertEqual(user.role, 'customer')
+		self.assertEqual(user.staff_type, 'general')
+
+	def test_user_endpoint_does_not_allow_applicant_to_change_own_role(self):
+		user = User.objects.create_user(username='partner_user_update', password='StrongPass123')
+		self.client.force_authenticate(user=user)
+
+		response = self.client.patch(
+			f'/users/users/{user.id}/',
+			{'role': 'washer', 'staff_type': 'washer'},
+			format='json',
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+		user.refresh_from_db()
+		self.assertEqual(user.role, 'customer')
+
+
+class PartnerApplicationApiTests(APITestCase):
+	def setUp(self):
+		self.user = User.objects.create_user(username='partner_applicant', password='StrongPass123')
+		self.client.force_authenticate(user=self.user)
+		self.application_data = {
+			'first_name': 'Alex',
+			'last_name': 'Kimani',
+			'phone': '0712345678',
+			'email': 'alex@example.com',
+			'business_name': 'Fresh Fold',
+			'business_type': 'Laundry shop',
+			'location': 'Westlands',
+			'pickup_address': 'Market Street',
+			'service_area': 'Westlands and Parklands',
+			'machine_count': 3,
+			'pickup_latitude': '-1.267000',
+			'pickup_longitude': '36.810000',
+		}
+
+	def test_authenticated_user_can_submit_one_application(self):
+		response = self.client.post('/users/partner-applications/', self.application_data, format='json')
+
+		self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+		self.assertEqual(response.data['status'], 'pending')
+		self.assertEqual(response.data['business_name'], 'Fresh Fold')
+		self.assertEqual(response.data['user'], self.user.id)
+		self.user.refresh_from_db()
+		self.assertEqual(self.user.role, 'customer')
+
+		duplicate_response = self.client.post('/users/partner-applications/', self.application_data, format='json')
+		self.assertEqual(duplicate_response.status_code, status.HTTP_400_BAD_REQUEST)
+
+	def test_only_admin_can_approve_and_approval_populates_partner_profile(self):
+		create_response = self.client.post('/users/partner-applications/', self.application_data, format='json')
+		application_id = create_response.data['id']
+
+		self.assertEqual(
+			self.client.post(f'/users/partner-applications/{application_id}/approve/', {}, format='json').status_code,
+			status.HTTP_403_FORBIDDEN,
+		)
+
+		admin = User.objects.create_user(username='partner_admin', password='StrongPass123', is_staff=True)
+		self.client.force_authenticate(user=admin)
+		approve_response = self.client.post(
+			f'/users/partner-applications/{application_id}/approve/',
+			{'notes': 'Approved'},
+			format='json',
+		)
+
+		self.assertEqual(approve_response.status_code, status.HTTP_200_OK)
+		self.user.refresh_from_db()
+		self.assertEqual(self.user.role, 'washer')
+		self.assertEqual(self.user.staff_type, 'washer')
+		self.assertEqual(self.user.business_name, 'Fresh Fold')
+		self.assertEqual(self.user.service_area, 'Westlands and Parklands')
+		self.assertEqual(self.user.machine_count, 3)
+
+	def test_applicant_cannot_approve_another_application(self):
+		other_user = User.objects.create_user(username='other_applicant', password='StrongPass123')
+		application = PartnerApplication.objects.create(
+			user=other_user,
+			first_name='Sam',
+			last_name='Wanjiku',
+			phone='0712345679',
+			email='sam@example.com',
+			business_name='Clean Clothes',
+			business_type='Laundry shop',
+			location='Kilimani',
+			pickup_address='Kilimani Road',
+			service_area='Kilimani',
+			machine_count=2,
+		)
+		self.client.force_authenticate(user=self.user)
+
+		response = self.client.post(f'/users/partner-applications/{application.id}/approve/', {}, format='json')
+
+		self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+		other_user.refresh_from_db()
+		self.assertEqual(other_user.role, 'customer')
+
+	def test_rejected_application_can_be_resubmitted_without_activating_role(self):
+		create_response = self.client.post('/users/partner-applications/', self.application_data, format='json')
+		admin = User.objects.create_user(username='partner_admin', password='StrongPass123', is_staff=True)
+		self.client.force_authenticate(user=admin)
+
+		reject_response = self.client.post(
+			f"/users/partner-applications/{create_response.data['id']}/reject/",
+			{'notes': 'Please clarify your service area.'},
+			format='json',
+		)
+
+		self.assertEqual(reject_response.status_code, status.HTTP_200_OK)
+		self.assertEqual(reject_response.data['reviewer_notes'], 'Please clarify your service area.')
+		self.user.refresh_from_db()
+		self.assertEqual(self.user.role, 'customer')
+
+		self.client.force_authenticate(user=self.user)
+		resubmit_response = self.client.post('/users/partner-applications/', self.application_data, format='json')
+		self.assertEqual(resubmit_response.status_code, status.HTTP_201_CREATED)
+		self.assertEqual(resubmit_response.data['status'], 'pending')
