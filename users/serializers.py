@@ -133,6 +133,11 @@ class UserSerializer(serializers.ModelSerializer):
 
 class PartnerApplicationSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source="user.username", read_only=True)
+    active_order_count = serializers.SerializerMethodField()
+    completed_order_count = serializers.SerializerMethodField()
+    average_rating = serializers.SerializerMethodField()
+    rating_count = serializers.SerializerMethodField()
+    account_is_active = serializers.BooleanField(source="user.is_active", read_only=True)
 
     class Meta:
         model = PartnerApplication
@@ -140,6 +145,7 @@ class PartnerApplicationSerializer(serializers.ModelSerializer):
             "id",
             "user",
             "username",
+            "account_is_active",
             "first_name",
             "last_name",
             "phone",
@@ -153,11 +159,27 @@ class PartnerApplicationSerializer(serializers.ModelSerializer):
             "pickup_latitude",
             "pickup_longitude",
             "status",
+            "active_order_count",
+            "completed_order_count",
+            "average_rating",
+            "rating_count",
             "reviewer_notes",
             "reviewed_at",
             "created_at",
         ]
         read_only_fields = ["id", "user", "username", "status", "reviewer_notes", "reviewed_at", "created_at"]
+
+    def get_active_order_count(self, obj):
+        return getattr(obj, "active_order_count", 0)
+
+    def get_completed_order_count(self, obj):
+        return getattr(obj, "completed_order_count", 0)
+
+    def get_average_rating(self, obj):
+        return getattr(obj, "average_rating", None)
+
+    def get_rating_count(self, obj):
+        return getattr(obj, "rating_count", 0)
 
     def validate(self, attrs):
         user = self.context["request"].user

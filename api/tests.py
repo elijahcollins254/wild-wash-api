@@ -9,11 +9,14 @@ from api.settings import _get_ec2_private_ip
 
 
 class HealthCheckTests(SimpleTestCase):
-    def test_root_returns_success(self):
-        response = self.client.get(reverse('health-check'))
+    def test_root_lists_backend_endpoints(self):
+        response = self.client.get(reverse('endpoint-index'))
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {'status': 'ok'})
+        self.assertContains(response, 'API directory')
+        self.assertContains(response, 'href="/orders/"')
+        self.assertContains(response, 'href="/users/register/"')
+        self.assertContains(response, 'href="/health/"')
 
     def test_health_path_returns_success(self):
         response = self.client.get(reverse('health'))

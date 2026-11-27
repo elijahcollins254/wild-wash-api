@@ -72,6 +72,7 @@ if EC2_PRIVATE_IP:
 # Application definition
 
 INSTALLED_APPS = [
+    'api',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',

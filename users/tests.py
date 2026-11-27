@@ -8,6 +8,7 @@ from rest_framework.test import APIClient, APITestCase
 from rest_framework import status
 from rest_framework.reverse import reverse
 from django.test import override_settings
+from orders.models import Order, OrderReview
 
 from .models import DataDeletionRequest, PartnerApplication
 from .events import USER_COUNT_GROUP
@@ -309,6 +310,77 @@ class PartnerApplicationApiTests(APITestCase):
 		self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 		other_user.refresh_from_db()
 		self.assertEqual(other_user.role, 'customer')
+
+	def test_admin_list_includes_partner_activity_and_ratings(self):
+		application_response = self.client.post('/users/partner-applications/', self.application_data, format='json')
+		customer = User.objects.create_user(username='partner_customer', password='StrongPass123')
+		active_order = Order.objects.create(
+			user=customer,
+			washer=self.user,
+			pickup_address='Customer address',
+			dropoff_address='Customer address',
+			status='in_progress',
+		)
+		delivered_order = Order.objects.create(
+			user=customer,
+			washer=self.user,
+			pickup_address='Customer address',
+			dropoff_address='Customer address',
+			status='delivered',
+		)
+		OrderReview.objects.create(order=delivered_order, customer=customer, rating=4)
+		admin = User.objects.create_user(username='partner_admin', password='StrongPass123', is_staff=True)
+		self.client.force_authenticate(user=admin)
+
+		response = self.client.get('/users/partner-applications/')
+
+		self.assertEqual(response.status_code, status.HTTP_200_OK)
+		application_data = response.data['results'][0]
+		self.assertEqual(application_data['id'], application_response.data['id'])
+		self.assertEqual(application_data['active_order_count'], 1)
+		self.assertEqual(application_data['completed_order_count'], 1)
+		self.assertEqual(float(application_data['average_rating']), 4.0)
+		self.assertEqual(application_data['rating_count'], 1)
+
+	def test_admin_can_bulk_disable_and_activate_approved_partners(self):
+		application_response = self.client.post('/users/partner-applications/', self.application_data, format='json')
+		admin = User.objects.create_user(username='partner_admin', password='StrongPass123', is_staff=True)
+		self.client.force_authenticate(user=admin)
+		self.client.post(
+			f"/users/partner-applications/{application_response.data['id']}/approve/",
+			{},
+			format='json',
+		)
+		bulk_url = '/users/partner-applications/bulk-account-status/'
+		payload = {'application_ids': [application_response.data['id']], 'is_active': False}
+
+		disable_response = self.client.post(bulk_url, payload, format='json')
+
+		self.assertEqual(disable_response.status_code, status.HTTP_200_OK)
+		self.assertEqual(disable_response.data['updated_count'], 1)
+		self.user.refresh_from_db()
+		self.assertFalse(self.user.is_active)
+
+		payload['is_active'] = True
+		activate_response = self.client.post(bulk_url, payload, format='json')
+		self.assertEqual(activate_response.status_code, status.HTTP_200_OK)
+		self.user.refresh_from_db()
+		self.assertTrue(self.user.is_active)
+
+	def test_bulk_account_status_cannot_include_pending_application(self):
+		application_response = self.client.post('/users/partner-applications/', self.application_data, format='json')
+		admin = User.objects.create_user(username='partner_admin', password='StrongPass123', is_staff=True)
+		self.client.force_authenticate(user=admin)
+
+		response = self.client.post(
+			'/users/partner-applications/bulk-account-status/',
+			{'application_ids': [application_response.data['id']], 'is_active': False},
+			format='json',
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+		self.user.refresh_from_db()
+		self.assertTrue(self.user.is_active)
 
 	def test_rejected_application_can_be_resubmitted_without_activating_role(self):
 		create_response = self.client.post('/users/partner-applications/', self.application_data, format='json')

@@ -3,12 +3,14 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from django.core.exceptions import ValidationError
 from django.contrib.auth import get_user_model, authenticate
 from rest_framework.authtoken.models import Token
 from rest_framework.authentication import TokenAuthentication
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.db import transaction
+from django.db.models import Avg, Count, Q
 from django.conf import settings
 from django.http import JsonResponse, StreamingHttpResponse
 from django.utils import timezone
@@ -25,6 +27,7 @@ from .models import Location, ActivityLog, PartnerApplication
 from .serializers import DataDeletionRequestSerializer
 from .permissions import LocationBasedPermission
 from .events import trusted_user_count_stream
+from .partner_applications import approve_partner_application
 
 from http.client import HTTPException
 
@@ -221,9 +224,23 @@ class PartnerApplicationViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "head", "options"]
 
     def get_queryset(self):
+        queryset = PartnerApplication.objects.select_related("user", "reviewed_by").annotate(
+            active_order_count=Count(
+                "user__washed_orders",
+                filter=~Q(user__washed_orders__status__in=["delivered", "cancelled"]),
+                distinct=True,
+            ),
+            completed_order_count=Count(
+                "user__washed_orders",
+                filter=Q(user__washed_orders__status="delivered"),
+                distinct=True,
+            ),
+            average_rating=Avg("user__washed_orders__review__rating"),
+            rating_count=Count("user__washed_orders__review", distinct=True),
+        )
         if self.request.user.is_staff or self.request.user.is_superuser:
-            return PartnerApplication.objects.select_related("user", "reviewed_by").all()
-        return PartnerApplication.objects.filter(user=self.request.user)
+            return queryset.all()
+        return queryset.filter(user=self.request.user)
 
     def get_permissions(self):
         if self.action in ["approve", "reject"]:
@@ -234,46 +251,54 @@ class PartnerApplicationViewSet(viewsets.ModelViewSet):
     @transaction.atomic
     def approve(self, request, pk=None):
         application = self.get_object()
-        if application.status != "pending":
+        try:
+            application = approve_partner_application(application, request.user, request.data.get("notes", ""))
+        except ValidationError as error:
             return Response(
-                {"detail": f"Cannot approve an application with status {application.status}."},
+                {"detail": str(error)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        application = PartnerApplication.objects.select_for_update().get(pk=application.pk)
-        if application.status != "pending":
-            return Response(
-                {"detail": f"Cannot approve an application with status {application.status}."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        user = application.user
-        for field in [
-            "first_name",
-            "last_name",
-            "phone",
-            "email",
-            "business_name",
-            "business_type",
-            "location",
-            "pickup_address",
-            "service_area",
-            "machine_count",
-            "pickup_latitude",
-            "pickup_longitude",
-        ]:
-            setattr(user, field, getattr(application, field))
-        user.role = "washer"
-        user.staff_type = "washer"
-        user.profile_complete = True
-        user.save()
-
-        application.status = "approved"
-        application.reviewed_by = request.user
-        application.reviewed_at = timezone.now()
-        application.reviewer_notes = str(request.data.get("notes", "")).strip()
-        application.save(update_fields=["status", "reviewed_by", "reviewed_at", "reviewer_notes", "updated_at"])
         return Response(self.get_serializer(application).data)
+
+    @action(detail=False, methods=["post"], permission_classes=[permissions.IsAdminUser], url_path="bulk-account-status")
+    def bulk_account_status(self, request):
+        application_ids = request.data.get("application_ids")
+        is_active = request.data.get("is_active")
+        if (
+            not isinstance(application_ids, list)
+            or not application_ids
+            or any(not isinstance(application_id, int) or isinstance(application_id, bool) for application_id in application_ids)
+            or not isinstance(is_active, bool)
+        ):
+            return Response(
+                {"detail": "Provide application_ids as a non-empty list of IDs and is_active as a boolean."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        application_ids = set(application_ids)
+        with transaction.atomic():
+            applications = list(
+                PartnerApplication.objects.select_for_update()
+                .filter(pk__in=application_ids)
+                .values("id", "status", "user_id")
+            )
+            if len(applications) != len(application_ids):
+                return Response({"detail": "One or more selected applications were not found."}, status=status.HTTP_404_NOT_FOUND)
+            if any(application["status"] != "approved" for application in applications):
+                return Response(
+                    {"detail": "Only approved partner applications can be activated or disabled."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            user_ids = [application["user_id"] for application in applications]
+            updated_count = User.objects.filter(
+                pk__in=user_ids,
+                role="washer",
+                staff_type="washer",
+            ).update(is_active=is_active)
+
+        return Response({"updated_count": updated_count, "is_active": is_active})
 
     @action(detail=True, methods=["post"], permission_classes=[permissions.IsAdminUser])
     @transaction.atomic
