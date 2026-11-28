@@ -142,12 +142,43 @@ class OrderCreateSerializer(serializers.ModelSerializer):
         # Check if this is a manual order
         order_type = data.get("order_type", "online")
         
-        if order_type == "manual":
+        if order_type in ("manual", "partner"):
             # Manual orders require customer details instead of services
             if not data.get("customer_name"):
                 raise serializers.ValidationError({"customer_name": "Customer name is required for manual orders"})
             if not data.get("customer_phone"):
                 raise serializers.ValidationError({"customer_phone": "Customer phone is required for manual orders"})
+            if order_type == "partner":
+                request = self.context.get("request")
+                user = getattr(request, "user", None)
+                is_partner = user and getattr(user, "is_authenticated", False) and (
+                    getattr(user, "role", None) == "washer"
+                    or getattr(user, "staff_type", None) == "washer"
+                )
+                if not is_partner or not getattr(user, "service_location", None):
+                    raise serializers.ValidationError({
+                        "order_type": "Only approved partners with an assigned service location can create partner orders."
+                    })
+                services = data.get("services") or ([data["service"]] if data.get("service") else [])
+                if not services:
+                    raise serializers.ValidationError({"services": "At least one service must be provided"})
+                quantities = {service.pk: 1 for service in services}
+                for item in data.get("service_quantities", []):
+                    service_id = item.get("service_id")
+                    quantity = item.get("quantity", 1)
+                    if service_id not in quantities:
+                        raise serializers.ValidationError({
+                            "service_quantities": "Quantities must refer to a selected service."
+                        })
+                    if quantity < 1:
+                        raise serializers.ValidationError({
+                            "service_quantities": "Service quantities must be at least one."
+                        })
+                    quantities[service_id] = quantity
+                data["price"] = sum(
+                    (service.price * quantities[service.pk] for service in services),
+                    Decimal("0"),
+                )
         else:
             # Online orders require at least one service
             services = data.get("services", [])
@@ -171,7 +202,7 @@ class OrderCreateSerializer(serializers.ModelSerializer):
         user = getattr(request, "user", None)
         order_type = validated_data.get("order_type", "online")
 
-        # For manual orders, track which staff member created it
+        # Track the partner or staff member who created a non-cart order.
         created_by_user = None
         if order_type == "manual" and user and getattr(user, "is_authenticated", False):
             created_by_user = user
@@ -188,6 +219,9 @@ class OrderCreateSerializer(serializers.ModelSerializer):
                     guest_user.set_unusable_password()
                     guest_user.save()
                 validated_data['user'] = guest_user
+        elif order_type == "partner":
+            created_by_user = user
+            validated_data['user'] = None
         else:
             # For online orders, use normal user handling
             if not (user and getattr(user, "is_authenticated", False)):
@@ -207,8 +241,8 @@ class OrderCreateSerializer(serializers.ModelSerializer):
         
         # Auto-set service_location from staff's service_location for manual orders
         if 'service_location' not in validated_data or not validated_data['service_location']:
-            if order_type == "manual" and created_by_user and created_by_user.service_location:
-                # Manual orders inherit staff member's location
+            if order_type in ("manual", "partner") and created_by_user and created_by_user.service_location:
+                # Staff-created orders inherit the creator's service location.
                 validated_data['service_location'] = created_by_user.service_location
             elif user and user.service_location:
                 # For online orders, use user's service_location
@@ -246,8 +280,8 @@ class OrderCreateSerializer(serializers.ModelSerializer):
         if created_by_user:
             validated_data['created_by'] = created_by_user
         
-        # For manual orders, set status to pending_assignment (don't auto-assign rider)
-        if order_type == "manual":
+        # Staff- and partner-created orders start in the assignment queue.
+        if order_type in ("manual", "partner"):
             validated_data['status'] = 'pending_assignment'
         
         # Create the order

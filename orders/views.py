@@ -1,6 +1,7 @@
 # orders/views.py
 from django.db import models
 from django.db.models import Prefetch
+from django.conf import settings
 from django.http import StreamingHttpResponse
 from django.utils.dateparse import parse_date
 from rest_framework import generics, permissions, status
@@ -13,6 +14,15 @@ from .serializers import OrderListSerializer, OrderCreateSerializer, OrderReview
 from .events import order_event_stream, user_order_event_groups
 from users.permissions import LocationBasedPermission
 from users.models import Location
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def partner_order_url(code, suffix=''):
+    frontend_url = getattr(settings, 'WILDWASH_FRONTEND_URL', 'https://www.wildwash.co.ke').rstrip('/')
+    return f"{frontend_url}/orders/{code}{suffix}"
 
 
 class OrderEventsView(APIView):
@@ -236,6 +246,85 @@ class StaffCreateOrderView(APIView):
                 serializer.errors,
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+
+class PartnerCreateOrderView(APIView):
+    """Create an order on behalf of a walk-in customer at an approved partner."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        user = request.user
+        is_partner = user.role == 'washer' or user.staff_type == 'washer'
+        if not is_partner or not user.service_location:
+            return Response(
+                {'detail': 'Approved partner access with an assigned service location is required.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        payload = request.data.copy()
+        payload['order_type'] = 'partner'
+        payload.setdefault('drop_off_type', 'walk_in')
+        payload.pop('price', None)
+        serializer = OrderCreateSerializer(data=payload, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        order = serializer.save(service_location=user.service_location)
+
+        tracking_url = partner_order_url(order.code)
+        sms_result = {'success': False, 'message': 'Customer SMS could not be sent.'}
+        if order.customer_phone:
+            try:
+                from services.sms_service import AfricasTalkingSMSService
+
+                message = (
+                    f"Hi {order.customer_name}, {user.business_name or 'your laundry partner'} "
+                    f"created Wild Wash order {order.code}. Track its progress here: {tracking_url}"
+                )
+                result = AfricasTalkingSMSService().send_sms(order.customer_phone, message)
+                sms_result = {
+                    'success': bool(result and result.get('status') == 'success'),
+                    'message': (result or {}).get('message', 'No response from SMS provider.'),
+                }
+            except Exception:
+                logger.exception("Could not send partner order SMS for order %s", order.code)
+                sms_result = {'success': False, 'message': 'Order created, but customer SMS could not be sent.'}
+
+        return Response(
+            {
+                'order': OrderListSerializer(order, context={'request': request}).data,
+                'tracking_url': tracking_url,
+                'sms': sms_result,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class PartnerOrderTrackingView(APIView):
+    """Expose only the minimum tracking details for a partner order's code link."""
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, code):
+        order = Order.objects.filter(code=code, order_type='partner').prefetch_related('services').first()
+        if not order:
+            return Response({'detail': 'Order not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response({
+            'code': order.code,
+            'order_type': order.order_type,
+            'created_at': order.created_at,
+            'status': order.status,
+            'service_name': order.service.name if order.service else None,
+            'services_list': [
+                {'id': service.id, 'name': service.name, 'price': float(service.price)}
+                for service in order.services.all()
+            ],
+            'items': order.items,
+            'weight_kg': order.weight_kg,
+            'price': order.price,
+            'estimated_delivery': order.estimated_delivery,
+            'is_paid': order.is_paid(),
+            'payment_method': order.payment_method,
+            'payment_summary': order.get_payment_summary(),
+        })
 
 
 class RequestedOrdersListView(generics.ListAPIView):
@@ -1195,6 +1284,11 @@ class OrderListCreateView(generics.ListCreateAPIView):
         return queryset
 
     def perform_create(self, serializer):
+        if serializer.validated_data.get('order_type') == 'partner':
+            raise ValidationError({
+                'order_type': 'Partner orders must be created through the partner order endpoint.'
+            })
+
         # Automatically set the service_location based on the pickup address
         # You might want to implement a more sophisticated location assignment logic
         if self.request.user.is_authenticated:
@@ -1505,17 +1599,24 @@ class OrderListCreateView(generics.ListCreateAPIView):
 
 
 class OrderReviewView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
 
     def get_order(self, request, code):
-        return Order.objects.get(code=code, user=request.user)
+        order = Order.objects.get(code=code)
+        if order.order_type == 'partner':
+            return order
+        if request.user.is_authenticated and order.user_id == request.user.id:
+            return order
+        raise Order.DoesNotExist
 
     def get(self, request, code):
         try:
             order = self.get_order(request, code)
         except Order.DoesNotExist:
             return Response({'detail': 'Order not found.'}, status=status.HTTP_404_NOT_FOUND)
-        if order.status != 'delivered':
+        if order.order_type == 'partner' and not order.is_paid():
+            return Response({'detail': 'You can review this order after payment is complete.'}, status=status.HTTP_400_BAD_REQUEST)
+        if order.order_type != 'partner' and order.status != 'delivered':
             return Response({'detail': 'You can review an order after it is delivered.'}, status=status.HTTP_400_BAD_REQUEST)
         review = OrderReview.objects.filter(order=order).first()
         return Response(OrderReviewSerializer(review).data if review else None)
@@ -1525,7 +1626,9 @@ class OrderReviewView(APIView):
             order = self.get_order(request, code)
         except Order.DoesNotExist:
             return Response({'detail': 'Order not found.'}, status=status.HTTP_404_NOT_FOUND)
-        if order.status != 'delivered':
+        if order.order_type == 'partner' and not order.is_paid():
+            return Response({'detail': 'You can review this order after payment is complete.'}, status=status.HTTP_400_BAD_REQUEST)
+        if order.order_type != 'partner' and order.status != 'delivered':
             return Response({'detail': 'You can review an order after it is delivered.'}, status=status.HTTP_400_BAD_REQUEST)
 
         review = OrderReview.objects.filter(order=order).first()
@@ -1537,7 +1640,10 @@ class OrderReviewView(APIView):
             },
         )
         serializer.is_valid(raise_exception=True)
-        serializer.save(order=order, customer=request.user)
+        serializer.save(
+            order=order,
+            customer=request.user if order.order_type != 'partner' else None,
+        )
         return Response(serializer.data)
 
 

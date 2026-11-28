@@ -2,6 +2,7 @@ from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.test import TestCase
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from typing import Any, cast
 from unittest.mock import patch
 from rest_framework.test import APIClient, APITestCase
@@ -10,7 +11,8 @@ from rest_framework.reverse import reverse
 from django.test import override_settings
 from orders.models import Order, OrderReview
 
-from .models import DataDeletionRequest, PartnerApplication
+from .models import CartAddEvent, DataDeletionRequest, PartnerApplication
+from services.models import Service, ServiceCategory
 from .events import USER_COUNT_GROUP
 
 
@@ -53,6 +55,86 @@ class PublicUserCountApiTests(APITestCase):
 			self.assertEqual(event['user_count'], User.objects.count())
 		finally:
 			async_to_sync(channel_layer.group_discard)(USER_COUNT_GROUP, channel_name)
+
+
+class CartAddEventsApiTests(APITestCase):
+	def setUp(self):
+		original_on_commit = transaction.on_commit
+		on_commit_patcher = patch(
+			"django.db.transaction.on_commit",
+			side_effect=lambda callback, using=None, robust=False: original_on_commit(
+				callback,
+				using=using,
+			),
+		)
+		on_commit_patcher.start()
+		self.addCleanup(on_commit_patcher.stop)
+		self.user = User.objects.create_user(username="cart_customer", password="StrongPass123")
+		self.category, _ = ServiceCategory.objects.get_or_create(
+			slug="laundry",
+			defaults={"name": "Laundry"},
+		)
+		self.service = Service.objects.create(
+			name="Standard Wash",
+			category=self.category,
+			price="500.00",
+		)
+		self.url = reverse("cart-add-events")
+
+	def test_cart_add_events_require_authentication(self):
+		response = cast(Any, self.client.post(self.url, {
+			"events": [{"event_id": "event-1", "service_id": self.service.id}],
+		}, format="json"))
+
+		self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+		self.assertFalse(CartAddEvent.objects.exists())
+
+	def test_authenticated_cart_add_event_is_saved_with_server_service_name(self):
+		self.client.force_authenticate(user=self.user)
+
+		response = cast(Any, self.client.post(self.url, {
+			"events": [{"event_id": "event-1", "service_id": self.service.id}],
+		}, format="json"))
+
+		self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+		event = CartAddEvent.objects.get()
+		self.assertEqual(event.user, self.user)
+		self.assertEqual(event.service_id, self.service.id)
+		self.assertEqual(event.service_name, self.service.name)
+
+	def test_retried_event_is_not_saved_twice(self):
+		self.client.force_authenticate(user=self.user)
+		payload = {"events": [{"event_id": "event-1", "service_id": self.service.id}]}
+
+		first_response = cast(Any, self.client.post(self.url, payload, format="json"))
+		second_response = cast(Any, self.client.post(self.url, payload, format="json"))
+
+		self.assertEqual(first_response.status_code, status.HTTP_201_CREATED)
+		self.assertEqual(second_response.status_code, status.HTTP_201_CREATED)
+		self.assertEqual(CartAddEvent.objects.count(), 1)
+
+	def test_same_event_id_is_scoped_to_the_authenticated_user(self):
+		other_user = User.objects.create_user(username="other_cart_customer", password="StrongPass123")
+		self.client.force_authenticate(user=self.user)
+		payload = {"events": [{"event_id": "event-1", "service_id": self.service.id}]}
+		first_response = cast(Any, self.client.post(self.url, payload, format="json"))
+
+		self.client.force_authenticate(user=other_user)
+		second_response = cast(Any, self.client.post(self.url, payload, format="json"))
+
+		self.assertEqual(first_response.status_code, status.HTTP_201_CREATED)
+		self.assertEqual(second_response.status_code, status.HTTP_201_CREATED)
+		self.assertEqual(CartAddEvent.objects.count(), 2)
+
+	def test_unknown_service_is_rejected(self):
+		self.client.force_authenticate(user=self.user)
+
+		response = cast(Any, self.client.post(self.url, {
+			"events": [{"event_id": "event-1", "service_id": self.service.id + 100}],
+		}, format="json"))
+
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+		self.assertFalse(CartAddEvent.objects.exists())
 
 
 class DataDeletionRequestApiTests(APITestCase):

@@ -146,9 +146,15 @@ class Order(models.Model):
         choices=[
             ('online', 'Online Order'),
             ('manual', 'Staff-Created Order'),
+            ('partner', 'Partner-Created Order'),
         ],
         default='online',
-        help_text="Whether order was created online or manually by staff"
+        help_text="How the order was created: online, staff-created, or partner-created"
+    )
+    partner_paid_sms_sent_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the partner-order payment and rating SMS was sent"
     )
     drop_off_type = models.CharField(
         max_length=20,
@@ -511,7 +517,13 @@ class OrderEvent(models.Model):
 
 class OrderReview(models.Model):
     order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name='review')
-    customer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='order_reviews')
+    customer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name='order_reviews',
+    )
     rating = models.PositiveSmallIntegerField()
     feedback = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

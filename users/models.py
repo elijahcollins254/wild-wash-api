@@ -241,6 +241,34 @@ class ActivityLog(models.Model):
         return f"{self.user.username} - {self.action} - {self.timestamp}"
 
 
+class CartAddEvent(models.Model):
+    event_id = models.CharField(max_length=64)
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="cart_add_events",
+    )
+    service_id = models.PositiveIntegerField()
+    service_name = models.CharField(max_length=200)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "event_id"],
+                name="unique_cart_add_event_per_user",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["user", "-created_at"]),
+            models.Index(fields=["service_id", "-created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} added {self.service_name} at {self.created_at}"
+
+
 class DataDeletionRequest(models.Model):
     REQUEST_TYPE_CHOICES = (
         ('account', 'Account and associated data'),

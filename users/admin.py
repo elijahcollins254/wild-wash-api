@@ -2,10 +2,11 @@ from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
-from django.db.models import Avg, Count, Q
+from django.db.models import Avg, Count, Exists, OuterRef, Q
 from django.utils import timezone
 
-from .models import DataDeletionRequest, Location, PartnerApplication
+from .models import CartAddEvent, DataDeletionRequest, Location, PartnerApplication
+from orders.models import Order
 from .partner_applications import approve_partner_application
 
 User = get_user_model()
@@ -215,3 +216,26 @@ class DataDeletionRequestAdmin(admin.ModelAdmin):
     search_fields = ('account_email', 'account_phone', 'details')
     readonly_fields = ('user', 'account_email', 'account_phone', 'request_type', 'details', 'created_at')
     fields = ('user', 'account_email', 'account_phone', 'request_type', 'details', 'status', 'review_notes', 'created_at', 'updated_at')
+
+
+@admin.register(CartAddEvent)
+class CartAddEventAdmin(admin.ModelAdmin):
+    list_display = ("user", "service_name", "created_at", "order_placed_after_add")
+    list_filter = ("created_at",)
+    search_fields = ("user__username", "service_name")
+    readonly_fields = ("event_id", "user", "service_id", "service_name", "created_at")
+    list_select_related = ("user",)
+
+    def get_queryset(self, request):
+        subsequent_orders = Order.objects.filter(
+            user_id=OuterRef("user_id"),
+            created_at__gt=OuterRef("created_at"),
+            services__id=OuterRef("service_id"),
+        )
+        return super().get_queryset(request).annotate(
+            has_subsequent_order=Exists(subsequent_orders)
+        )
+
+    @admin.display(boolean=True, description="Same service ordered later")
+    def order_placed_after_add(self, obj):
+        return obj.has_subsequent_order

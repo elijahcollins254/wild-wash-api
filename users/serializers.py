@@ -8,6 +8,19 @@ from .models import DataDeletionRequest, Location, ActivityLog, PartnerApplicati
 User = get_user_model()
 
 
+class CartAddEventSerializer(serializers.Serializer):
+    event_id = serializers.RegexField(r"^[A-Za-z0-9_-]{1,64}$")
+    service_id = serializers.IntegerField(min_value=1)
+
+
+class CartAddEventsRequestSerializer(serializers.Serializer):
+    events = serializers.ListField(
+        child=CartAddEventSerializer(),
+        allow_empty=False,
+        max_length=100,
+    )
+
+
 def _validate_unique_phone(value, instance=None):
     normalized_phone = format_phone_number(value)
     if normalized_phone:

@@ -7,6 +7,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     UserViewSet, LoginView, ChangePasswordView, 
     get_csrf, RegisterView, UserProfileView, ProfileSetupView,
+    CartAddEventsView,
     PublicUserCountView, PublicUserCountEventsView,
     LocationViewSet, StaffViewSet, StaffLoginView, AdminLoginView,
     RequestPasswordResetView, VerifyPasswordResetCodeView, ConfirmPasswordResetView,
@@ -27,6 +28,7 @@ urlpatterns = [
     path('count/events/', PublicUserCountEventsView.as_view(), name='public-user-count-events'),
     path('', include(router.urls)),
     path('register/', RegisterView.as_view(), name='register'),
+    path('cart-add-events/', CartAddEventsView.as_view(), name='cart-add-events'),
     path('deletion-requests/', DataDeletionRequestView.as_view(), name='deletion-request-create'),
     path('login/', LoginView.as_view(), name='login'),
     path('google-auth/mobile/', MobileGoogleAuthView.as_view(), name='google-auth-mobile'),

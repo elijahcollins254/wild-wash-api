@@ -1,5 +1,5 @@
 from channels.layers import get_channel_layer
-from rest_framework import viewsets, permissions, status
+from rest_framework import serializers, viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -23,11 +23,12 @@ from .serializers import (
     LocationSerializer, StaffCreateSerializer, ActivityLogSerializer,
     PartnerApplicationSerializer
 )
-from .models import Location, ActivityLog, PartnerApplication
-from .serializers import DataDeletionRequestSerializer
+from .models import Location, ActivityLog, CartAddEvent, PartnerApplication
+from .serializers import CartAddEventsRequestSerializer, DataDeletionRequestSerializer
 from .permissions import LocationBasedPermission
 from .events import trusted_user_count_stream
 from .partner_applications import approve_partner_application
+from services.models import Service
 
 from http.client import HTTPException
 
@@ -455,6 +456,49 @@ class RegisterView(APIView):
             user = serializer.save()
             return Response(UserSerializer(user).data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class CartAddEventsView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = CartAddEventsRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        events = serializer.validated_data["events"]
+
+        services = Service.objects.in_bulk({event["service_id"] for event in events})
+        missing_service_ids = sorted({
+            event["service_id"] for event in events
+            if event["service_id"] not in services
+        })
+        if missing_service_ids:
+            raise serializers.ValidationError({
+                "service_ids": f"Unknown service IDs: {missing_service_ids}"
+            })
+
+        existing_ids = set(
+            CartAddEvent.objects.filter(
+                user=request.user,
+                event_id__in=[event["event_id"] for event in events],
+            )
+            .values_list("event_id", flat=True)
+        )
+        new_events = []
+        for event in events:
+            if event["event_id"] in existing_ids:
+                continue
+            existing_ids.add(event["event_id"])
+            new_events.append(
+                CartAddEvent(
+                    event_id=event["event_id"],
+                    user=request.user,
+                    service_id=event["service_id"],
+                    service_name=services[event["service_id"]].name,
+                )
+            )
+        CartAddEvent.objects.bulk_create(new_events, ignore_conflicts=True)
+
+        return Response({"accepted": len(events)}, status=status.HTTP_201_CREATED)
 
 
 class PublicUserCountView(APIView):

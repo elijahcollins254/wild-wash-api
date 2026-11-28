@@ -6,15 +6,59 @@ from notifications.models import Notification
 from django.contrib.auth import get_user_model
 from users.models import Location
 from django.conf import settings
+from django.utils import timezone
 import logging
 
 logger = logging.getLogger(__name__)
 
 User = get_user_model()
 
+
+def send_partner_paid_sms(order_id):
+    """Send one rating invitation once a partner order is fully paid."""
+    order = Order.objects.filter(pk=order_id, order_type='partner').first()
+    if not order or not order.customer_phone or not order.is_paid():
+        return
+
+    sent_at = timezone.now()
+    claimed = Order.objects.filter(
+        pk=order.pk,
+        partner_paid_sms_sent_at__isnull=True,
+    ).update(partner_paid_sms_sent_at=sent_at)
+    if not claimed:
+        return
+
+    frontend_url = getattr(settings, 'WILDWASH_FRONTEND_URL', 'https://www.wildwash.co.ke').rstrip('/')
+    rating_url = f"{frontend_url}/orders/{order.code}/rating"
+    try:
+        from services.sms_service import AfricasTalkingSMSService
+
+        result = AfricasTalkingSMSService().send_sms(
+            order.customer_phone,
+            f"Thanks for choosing Wild Wash. Your order {order.code} is paid. "
+            f"Please rate our service: {rating_url}",
+        )
+        if not result or result.get('status') != 'success':
+            logger.warning(
+                "Partner paid SMS failed for order %s: %s",
+                order.code,
+                (result or {}).get('message', 'No response from SMS provider.'),
+            )
+            Order.objects.filter(pk=order.pk, partner_paid_sms_sent_at=sent_at).update(
+                partner_paid_sms_sent_at=None
+            )
+    except Exception:
+        logger.exception("Could not send partner paid SMS for order %s", order.code)
+        Order.objects.filter(pk=order.pk, partner_paid_sms_sent_at=sent_at).update(
+            partner_paid_sms_sent_at=None
+        )
+
+
 @receiver(post_save, sender=Order)
 def order_status_update(sender, instance, created, update_fields=None, **kwargs):
     """Create notifications when order is created or updated"""
+    if instance.order_type == 'partner':
+        send_partner_paid_sms(instance.pk)
     
     # Prevent infinite recursion when we update order in auto-assign
     if update_fields is not None and set(update_fields) == {'rider', 'status', 'service_location'}:
@@ -146,5 +190,12 @@ def order_status_update(sender, instance, created, update_fields=None, **kwargs)
             print(f"Error in auto-assign logic for order {instance.code}: {e}")
             import traceback
             traceback.print_exc()
+
+
+@receiver(post_save, sender='payments.Payment')
+def partner_order_payment_update(sender, instance, **kwargs):
+    """Recheck payment status whenever a payment is created or changed."""
+    if instance.order_id:
+        send_partner_paid_sms(instance.order_id)
 
 

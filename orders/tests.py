@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from unittest import TestCase
+from unittest.mock import Mock, patch
 from uuid import uuid4
 
 from django.contrib.auth import get_user_model
@@ -8,6 +10,8 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from .models import Order, OrderReview
+from payments.models import Payment
+from services.models import Service
 from users.models import Location
 
 User = get_user_model()
@@ -301,3 +305,132 @@ class OrderReviewTests(DjangoTestCase):
 		url = f'/orders/{self.order.code}/review/'
 		self.assertEqual(self.client.get(url).status_code, 404)
 		self.assertEqual(self.client.post(url, {'rating': 5}, format='json').status_code, 404)
+
+
+class PartnerOrderOnboardingTests(DjangoTestCase):
+	def setUp(self):
+		user_count_signal = patch('users.signals.transaction.on_commit')
+		user_count_signal.start()
+		self.addCleanup(user_count_signal.stop)
+		suffix = uuid4().hex
+		self.location = Location.objects.create(name=f'Partner location {suffix}')
+		self.partner = User.objects.create_user(
+			username=f'partner_{suffix}',
+			password='testpass123',
+			role='washer',
+			staff_type='washer',
+			service_location=self.location,
+			business_name='Partner Laundry',
+		)
+		self.service = Service.objects.create(name=f'Partner wash {suffix}', price='100.00')
+		self.client = APIClient()
+		self.payload = {
+			'customer_name': 'Guest Customer',
+			'customer_phone': '0712345678',
+			'services': [self.service.id],
+			'service_quantities': [{'service_id': self.service.id, 'quantity': 1}],
+			'items': 1,
+			'price': '100.00',
+			'pickup_address': 'Partner Laundry',
+			'dropoff_address': 'Customer collection',
+		}
+
+	def test_partner_creation_requires_an_approved_partner_account(self):
+		self.assertEqual(
+			self.client.post('/orders/partner-create/', self.payload, format='json').status_code,
+			401,
+		)
+
+		customer = User.objects.create_user(
+			username=f'customer_{uuid4().hex}',
+			password='testpass123',
+			service_location=self.location,
+		)
+		self.client.force_authenticate(user=customer)
+		self.assertEqual(
+			self.client.post('/orders/partner-create/', self.payload, format='json').status_code,
+			403,
+		)
+
+	def test_partner_order_is_guest_owned_and_sms_contains_tracking_url(self):
+		send_sms = Mock(return_value={
+			'status': 'success',
+			'message': 'SMS sent successfully',
+		})
+		sms_service_stub = SimpleNamespace(
+			AfricasTalkingSMSService=Mock(return_value=SimpleNamespace(send_sms=send_sms))
+		)
+		self.client.force_authenticate(user=self.partner)
+
+		with patch.dict('sys.modules', {'services.sms_service': sms_service_stub}):
+			response = self.client.post('/orders/partner-create/', self.payload, format='json')
+
+		self.assertEqual(response.status_code, 201)
+		order = Order.objects.get(code=response.data['order']['code'])
+		self.assertEqual(order.order_type, 'partner')
+		self.assertIsNone(order.user)
+		self.assertEqual(order.created_by, self.partner)
+		self.assertEqual(order.service_location, self.location)
+		self.assertEqual(order.status, 'pending_assignment')
+		self.assertTrue(response.data['sms']['success'])
+		self.assertIn(order.code, response.data['tracking_url'])
+		send_sms.assert_called_once()
+		self.assertIn(response.data['tracking_url'], send_sms.call_args.args[1])
+
+	def test_guest_tracking_exposes_no_customer_phone(self):
+		order = Order.objects.create(
+			code=f'WW-TRACK-{uuid4().hex[:16]}',
+			order_type='partner',
+			customer_name='Guest Customer',
+			customer_phone='0712345678',
+			service_location=self.location,
+			pickup_address='Partner Laundry',
+			dropoff_address='Customer collection',
+		)
+
+		response = self.client.get(f'/orders/{order.code}/track/')
+
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(response.data['code'], order.code)
+		self.assertNotIn('customer_phone', response.data)
+		self.assertNotIn('pickup_address', response.data)
+
+	def test_paid_partner_order_sends_one_rating_sms_and_allows_guest_review(self):
+		send_sms = Mock(return_value={
+			'status': 'success',
+			'message': 'SMS sent successfully',
+		})
+		sms_service_stub = SimpleNamespace(
+			AfricasTalkingSMSService=Mock(return_value=SimpleNamespace(send_sms=send_sms))
+		)
+		order = Order.objects.create(
+			code=f'WW-PAID-{uuid4().hex[:16]}',
+			order_type='partner',
+			customer_name='Guest Customer',
+			customer_phone='0712345678',
+			pickup_address='Partner Laundry',
+			dropoff_address='Customer collection',
+			washer_price='100.00',
+			washed_at=timezone.now(),
+		)
+		with patch.dict('sys.modules', {'services.sms_service': sms_service_stub}):
+			payment = Payment.objects.create(
+				order=order,
+				amount='100.00',
+				phone_number='0712345678',
+				status=Payment.STATUS_SUCCESS,
+			)
+
+		order.refresh_from_db()
+		self.assertIsNotNone(order.partner_paid_sms_sent_at)
+		self.assertIn('/rating', send_sms.call_args.args[1])
+		payment.save()
+		self.assertEqual(send_sms.call_count, 1)
+
+		response = self.client.post(
+			f'/orders/{order.code}/rating/',
+			{'rating': 5, 'feedback': 'Great service'},
+			format='json',
+		)
+		self.assertEqual(response.status_code, 200)
+		self.assertIsNone(OrderReview.objects.get(order=order).customer)
