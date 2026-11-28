@@ -377,6 +377,11 @@ class PartnerOrderOnboardingTests(DjangoTestCase):
 		send_sms.assert_called_once()
 		self.assertIn(response.data['tracking_url'], send_sms.call_args.args[1])
 
+		order_list = self.client.get('/orders/')
+		self.assertEqual(order_list.status_code, 200)
+		listed_order = next(item for item in order_list.data['results'] if item['code'] == order.code)
+		self.assertEqual(listed_order['created_by']['username'], self.partner.username)
+
 	def test_guest_tracking_exposes_no_customer_phone(self):
 		order = Order.objects.create(
 			code=f'WW-TRACK-{uuid4().hex[:16]}',

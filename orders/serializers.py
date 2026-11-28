@@ -31,6 +31,7 @@ class OrderListLightSerializer(serializers.ModelSerializer):
     service_name = serializers.CharField(source="service.name", read_only=True, allow_null=True)
     user_name = serializers.SerializerMethodField()
     rider_name = serializers.SerializerMethodField()
+    created_by = serializers.SerializerMethodField()
     user = serializers.SerializerMethodField()
     service_location = serializers.SerializerMethodField()
     
@@ -44,6 +45,15 @@ class OrderListLightSerializer(serializers.ModelSerializer):
         if not rider:
             return "Unassigned"
         return f"{rider.first_name} {rider.last_name}".strip() or rider.username
+
+    def get_created_by(self, obj):
+        if not obj.created_by:
+            return None
+        return {
+            "username": obj.created_by.username,
+            "first_name": obj.created_by.first_name,
+            "last_name": obj.created_by.last_name,
+        }
 
     def get_user(self, obj):
         if not obj.user:
@@ -71,7 +81,7 @@ class OrderListLightSerializer(serializers.ModelSerializer):
         fields = [
             "id", "code", "status", "created_at", "customer_name", "service_name",
             "user_name", "user", "rider_name", "service_location", "price",
-            "actual_price", "is_paid", "order_type"
+            "actual_price", "is_paid", "order_type", "created_by"
         ]
 
 
